@@ -17,6 +17,8 @@ export async function POST(req: NextRequest) {
     const { error: dbError } = await supabase
       .from("access_requests")
       .insert({
+        first_name: first_name.trim(),
+        last_name: last_name.trim(),
         full_name,
         email,
         phone: phone || null,

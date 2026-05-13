@@ -19,6 +19,8 @@ export interface AdminPatientRow {
 
 export interface AccessRequest {
   id: string;
+  first_name: string | null;
+  last_name: string | null;
   full_name: string;
   email: string;
   phone: string | null;

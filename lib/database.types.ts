@@ -66,6 +66,8 @@ export interface Database {
       access_requests: {
         Row: {
           id: string;
+          first_name: string;
+          last_name: string;
           full_name: string;
           email: string;
           phone: string | null;
@@ -74,6 +76,8 @@ export interface Database {
           created_at: string;
         };
         Insert: {
+          first_name: string;
+          last_name: string;
           full_name: string;
           email: string;
           phone?: string | null;
@@ -81,6 +85,8 @@ export interface Database {
           status?: string;
         };
         Update: {
+          first_name?: string;
+          last_name?: string;
           full_name?: string;
           email?: string;
           phone?: string | null;
