@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Logo } from "./Logo";
 import { LanguageToggle } from "./LanguageToggle";
+import { LogoutButton } from "./LogoutButton";
 import { Bell, Menu, X } from "lucide-react";
 import { useState } from "react";
 
@@ -65,12 +66,9 @@ export function Header({ role = "patient" }: HeaderProps) {
               </button>
             )}
             {role !== "public" && (
-              <Link
-                href="/auth/login"
-                className="hidden md:block text-sm font-primary font-semibold text-text-secondary hover:text-primary transition-colors"
-              >
-                {t("logout")}
-              </Link>
+              <div className="hidden md:block">
+                <LogoutButton label={t("logout")} />
+              </div>
             )}
             {/* Mobile menu toggle */}
             <button
@@ -100,12 +98,9 @@ export function Header({ role = "patient" }: HeaderProps) {
               {link.label}
             </Link>
           ))}
-          <Link
-            href="/auth/login"
-            className="py-2 px-3 text-sm font-primary font-semibold text-text-secondary hover:bg-bg-subtle rounded-lg"
-          >
-            {t("logout")}
-          </Link>
+          <div className="py-2 px-3">
+            <LogoutButton label={t("logout")} />
+          </div>
         </div>
       )}
     </header>

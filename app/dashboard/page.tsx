@@ -1,7 +1,7 @@
 import { useTranslations } from "next-intl";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Header } from "@/components/layout/Header";
-import { currentPatient } from "@/lib/mock-data/patients";
 import { buildChartData } from "@/lib/utils/recovery";
 import { KpiCards } from "@/components/cards/KpiCards";
 import { WeekProgress } from "@/components/cards/WeekProgress";
@@ -10,13 +10,17 @@ import { WeekCalendar } from "@/components/cards/WeekCalendar";
 import { NotificationBell } from "@/components/cards/NotificationBell";
 import { PainChart } from "@/components/charts/PainChart";
 import { AdherenceChart } from "@/components/charts/AdherenceChart";
+import { fetchPatientData, hasLoggedToday } from "@/lib/data/patient";
+import { MilestoneBanner } from "@/components/ui/MilestoneBanner";
 import { Plus, CheckCircle } from "lucide-react";
 
-const hasLoggedToday = false; // mock — connect Supabase here
-
-export default function DashboardPage() {
+export default async function DashboardPage() {
   const t = useTranslations("dashboard");
-  const patient = currentPatient;
+  const patient = await fetchPatientData();
+
+  if (!patient) redirect("/auth/login");
+
+  const loggedToday = await hasLoggedToday(patient.profile.id);
   const chartData = buildChartData(patient.daily_logs);
 
   return (
@@ -24,7 +28,6 @@ export default function DashboardPage() {
       <Header role="patient" />
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
 
-        {/* Top row: Welcome + notifications */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-primary font-semibold text-dark">
@@ -37,12 +40,17 @@ export default function DashboardPage() {
           <NotificationBell />
         </div>
 
-        {/* Week progress bar */}
         <WeekProgress currentWeek={patient.current_week} />
 
-        {/* Main CTA */}
+        <div className="mt-6">
+          <MilestoneBanner
+            completedDays={patient.daily_logs.filter((l) => l.exercises_completed).length}
+            streak={patient.streak}
+          />
+        </div>
+
         <div className="my-6">
-          {hasLoggedToday ? (
+          {loggedToday ? (
             <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-2xl px-6 py-4">
               <CheckCircle className="w-6 h-6 text-green-600" />
               <span className="font-primary font-semibold text-green-700">{t("logged_today")}</span>
@@ -58,15 +66,12 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* KPI Cards */}
         <KpiCards patient={patient} />
 
-        {/* Status card */}
         <div className="mt-6">
           <StatusCard patient={patient} />
         </div>
 
-        {/* Charts row */}
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white rounded-2xl shadow-card p-6">
             <h2 className="text-base font-primary font-semibold text-dark mb-4">
@@ -82,7 +87,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Weekly calendar */}
         <div className="mt-6">
           <WeekCalendar logs={patient.daily_logs} />
         </div>

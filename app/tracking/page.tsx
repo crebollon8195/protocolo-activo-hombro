@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { supabase } from "@/lib/supabase";
 import { getPainColor } from "@/lib/utils/recovery";
 import { CheckCircle, Activity } from "lucide-react";
 
@@ -24,6 +25,7 @@ export default function TrackingPage() {
   const [comments, setComments] = useState("");
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   function getPainDescription() {
     if (pain <= 2) return `${t("pain_0")} / ${t("pain_mild")}`;
@@ -32,13 +34,82 @@ export default function TrackingPage() {
     return t("pain_severe");
   }
 
-  function handleSave() {
+  async function handleSave() {
+    if (exercises === null || mobility === null) return;
     setLoading(true);
-    // Mock save — connect Supabase here
-    setTimeout(() => {
-      setLoading(false);
+    setError("");
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { router.push("/auth/login"); return; }
+
+      // Get patient profile to calculate week number
+      const { data: patientProfile } = await supabase
+        .from("patient_profiles")
+        .select("program_start_date")
+        .eq("user_id", user.id)
+        .single();
+
+      const today = new Date().toISOString().split("T")[0];
+      const startDate = patientProfile?.program_start_date
+        ? new Date(patientProfile.program_start_date)
+        : new Date();
+      const daysDiff = Math.floor((new Date().getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+      const weekNumber = Math.min(6, Math.max(1, Math.ceil((daysDiff + 1) / 7)));
+
+      // Upsert daily log (prevent duplicate for same day)
+      const { error: logError } = await supabase.from("daily_logs").upsert(
+        {
+          user_id: user.id,
+          date: today,
+          week_number: weekNumber,
+          pain_score: pain,
+          exercises_completed: exercises,
+          mobility_status: mobility,
+          night_pain: nightPain ?? false,
+          sleep_quality: sleep ?? "regular",
+          main_limitation: limitation || null,
+          comments: comments || null,
+        },
+        { onConflict: "user_id,date" }
+      );
+
+      if (logError) throw logError;
+
+      // Recalculate and upsert weekly_progress for this week
+      const { data: weekLogs } = await supabase
+        .from("daily_logs")
+        .select("exercises_completed, pain_score")
+        .eq("user_id", user.id)
+        .eq("week_number", weekNumber);
+
+      if (weekLogs && weekLogs.length > 0) {
+        const completed = weekLogs.filter((l) => l.exercises_completed).length;
+        const adherence = Math.round((completed / 7) * 100);
+        const avgPain = Math.round(
+          (weekLogs.reduce((s, l) => s + (l.pain_score || 0), 0) / weekLogs.length) * 10
+        ) / 10;
+        const recoveryScore = Math.min(100, Math.round(adherence * 0.6 + Math.max(0, (10 - avgPain)) * 4));
+
+        await supabase.from("weekly_progress").upsert(
+          {
+            user_id: user.id,
+            week_number: weekNumber,
+            adherence_percentage: adherence,
+            average_pain: avgPain,
+            recovery_score: recoveryScore,
+          },
+          { onConflict: "user_id,week_number" }
+        );
+      }
+
       setSaved(true);
-    }, 800);
+    } catch (err) {
+      console.error(err);
+      setError("Error guardando el registro. Intenta de nuevo.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (saved) {
@@ -111,7 +182,6 @@ export default function TrackingPage() {
               <span>5 — Moderado</span>
               <span>10 — Severo</span>
             </div>
-            {/* Color scale */}
             <div className="h-2 rounded-full bg-gradient-to-r from-green-400 via-yellow-400 via-orange-400 to-red-500" />
           </div>
 
@@ -229,6 +299,12 @@ export default function TrackingPage() {
               rows={3}
             />
           </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3">
+              <p className="text-sm text-red-700 font-body">{error}</p>
+            </div>
+          )}
 
           <Button
             onClick={handleSave}

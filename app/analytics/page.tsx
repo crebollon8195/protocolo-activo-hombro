@@ -1,23 +1,27 @@
 import { useTranslations } from "next-intl";
+import { redirect } from "next/navigation";
 import { Header } from "@/components/layout/Header";
-import { currentPatient } from "@/lib/mock-data/patients";
 import { buildChartData } from "@/lib/utils/recovery";
 import { PainChart } from "@/components/charts/PainChart";
 import { AdherenceChart } from "@/components/charts/AdherenceChart";
 import { RecoveryGauge } from "@/components/charts/RecoveryGauge";
+import { fetchPatientData } from "@/lib/data/patient";
 import { BarChart2, Target, CheckSquare, Flame, Trophy, AlertTriangle } from "lucide-react";
 
-export default function AnalyticsPage() {
+export default async function AnalyticsPage() {
   const t = useTranslations("analytics");
-  const patient = currentPatient;
+  const patient = await fetchPatientData();
+
+  if (!patient) redirect("/auth/login");
+
   const chartData = buildChartData(patient.daily_logs);
 
-  const allLogs = patient.daily_logs;
-  const completedDays = allLogs.filter((l) => l.exercises_completed).length;
-  const initialPain = patient.patient_profile.initial_pain_score;
-  const painReduction = Math.round(((initialPain - patient.current_pain) / initialPain) * 100);
+  const completedDays = patient.daily_logs.filter((l) => l.exercises_completed).length;
+  const initialPain = patient.patient_profile.initial_pain_score || patient.current_pain;
+  const painReduction = initialPain > 0
+    ? Math.round(((initialPain - patient.current_pain) / initialPain) * 100)
+    : 0;
 
-  // Best and hardest weeks
   const weeklyByAdherence = [...patient.weekly_progress].sort(
     (a, b) => b.adherence_percentage - a.adherence_percentage
   );
@@ -43,7 +47,6 @@ export default function AnalyticsPage() {
           <p className="text-sm text-text-secondary font-body mt-0.5">{t("subtitle")}</p>
         </div>
 
-        {/* Stats grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
           {stats.map(({ icon: Icon, label, value, sub, color }) => (
             <div key={label} className="bg-white rounded-2xl shadow-card p-4">
@@ -55,7 +58,6 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        {/* Recovery Score gauge */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
           <div className="bg-white rounded-2xl shadow-card p-6 lg:col-span-1 flex flex-col items-center">
             <h2 className="text-base font-primary font-semibold text-dark mb-2 self-start">
@@ -81,7 +83,6 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Adherence chart */}
         <div className="bg-white rounded-2xl shadow-card p-6 mb-6">
           <h2 className="text-base font-primary font-semibold text-dark mb-4">
             {t("adherence_trend")}
@@ -89,71 +90,79 @@ export default function AnalyticsPage() {
           <AdherenceChart weeklyProgress={patient.weekly_progress} height={220} />
         </div>
 
-        {/* Mobility evolution cards */}
-        <div className="bg-white rounded-2xl shadow-card p-6 mb-6">
-          <h2 className="text-base font-primary font-semibold text-dark mb-4">
-            {t("mobility_evolution")}
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {patient.weekly_progress.map((w) => {
-              const weekLogs = patient.daily_logs.filter((l) => l.week_number === w.week_number);
-              const betterCount = weekLogs.filter((l) => l.mobility_status === "better").length;
-              const pct = weekLogs.length > 0 ? Math.round((betterCount / weekLogs.length) * 100) : 0;
-              return (
-                <div
-                  key={w.week_number}
-                  className="bg-bg-subtle rounded-xl p-3 text-center"
-                >
-                  <div className="text-xs text-text-secondary font-primary font-semibold mb-1">
-                    Semana {w.week_number}
-                  </div>
-                  <div
-                    className="text-lg font-primary font-bold"
-                    style={{ color: pct >= 60 ? "#22c55e" : pct >= 40 ? "#eab308" : "#f97316" }}
-                  >
-                    {pct}%
-                  </div>
-                  <div className="text-xs text-text-secondary font-body">mejoría</div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Recovery timeline */}
-        <div className="bg-white rounded-2xl shadow-card p-6">
-          <h2 className="text-base font-primary font-semibold text-dark mb-4">
-            {t("recovery_timeline")}
-          </h2>
-          <div className="relative">
-            <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-bg-subtle" />
-            <div className="space-y-4">
-              {patient.weekly_progress.map((w) => (
-                <div key={w.week_number} className="relative pl-10">
-                  <div
-                    className={`absolute left-2.5 top-1 w-3 h-3 rounded-full border-2 border-white ${
-                      w.adherence_percentage >= 70 ? "bg-primary" : "bg-yellow-400"
-                    }`}
-                  />
-                  <div className="bg-bg-subtle rounded-xl p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-primary font-semibold text-dark">
-                        Semana {w.week_number}
-                      </span>
-                      <span className="text-xs text-primary font-primary font-semibold">
-                        Score: {w.recovery_score}
-                      </span>
+        {patient.weekly_progress.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-card p-6 mb-6">
+            <h2 className="text-base font-primary font-semibold text-dark mb-4">
+              {t("mobility_evolution")}
+            </h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {patient.weekly_progress.map((w) => {
+                const weekLogs = patient.daily_logs.filter((l) => l.week_number === w.week_number);
+                const betterCount = weekLogs.filter((l) => l.mobility_status === "better").length;
+                const pct = weekLogs.length > 0 ? Math.round((betterCount / weekLogs.length) * 100) : 0;
+                return (
+                  <div key={w.week_number} className="bg-bg-subtle rounded-xl p-3 text-center">
+                    <div className="text-xs text-text-secondary font-primary font-semibold mb-1">
+                      Semana {w.week_number}
                     </div>
-                    <div className="flex gap-4 mt-1 text-xs text-text-secondary font-body">
-                      <span>Dolor promedio: {w.average_pain}</span>
-                      <span>Adherencia: {w.adherence_percentage}%</span>
+                    <div
+                      className="text-lg font-primary font-bold"
+                      style={{ color: pct >= 60 ? "#22c55e" : pct >= 40 ? "#eab308" : "#f97316" }}
+                    >
+                      {pct}%
                     </div>
+                    <div className="text-xs text-text-secondary font-body">mejoría</div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
-        </div>
+        )}
+
+        {patient.weekly_progress.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-card p-6">
+            <h2 className="text-base font-primary font-semibold text-dark mb-4">
+              {t("recovery_timeline")}
+            </h2>
+            <div className="relative">
+              <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-bg-subtle" />
+              <div className="space-y-4">
+                {patient.weekly_progress.map((w) => (
+                  <div key={w.week_number} className="relative pl-10">
+                    <div
+                      className={`absolute left-2.5 top-1 w-3 h-3 rounded-full border-2 border-white ${
+                        w.adherence_percentage >= 70 ? "bg-primary" : "bg-yellow-400"
+                      }`}
+                    />
+                    <div className="bg-bg-subtle rounded-xl p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-primary font-semibold text-dark">
+                          Semana {w.week_number}
+                        </span>
+                        <span className="text-xs text-primary font-primary font-semibold">
+                          Score: {w.recovery_score}
+                        </span>
+                      </div>
+                      <div className="flex gap-4 mt-1 text-xs text-text-secondary font-body">
+                        <span>Dolor promedio: {w.average_pain}</span>
+                        <span>Adherencia: {w.adherence_percentage}%</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {patient.daily_logs.length === 0 && (
+          <div className="bg-white rounded-2xl shadow-card p-12 text-center">
+            <BarChart2 className="w-12 h-12 text-text-secondary mx-auto mb-4 opacity-40" />
+            <p className="text-text-secondary font-body text-sm">
+              Aún no hay datos. Registra tu primer día para ver tus analíticas.
+            </p>
+          </div>
+        )}
 
       </main>
     </div>

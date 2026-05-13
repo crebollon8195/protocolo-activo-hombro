@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Logo } from "@/components/layout/Logo";
 import { LanguageToggle } from "@/components/layout/LanguageToggle";
 import { Footer } from "@/components/layout/Footer";
+import { AccessRequestForm } from "@/components/forms/AccessRequestForm";
 import {
   Activity, BarChart2, Bell, FileText, Shield, Smartphone,
   CheckCircle, ChevronRight, HelpCircle
@@ -18,6 +19,7 @@ export default function LandingPage() {
         <HowItWorksSection />
         <FeaturesSection />
         <FAQSection />
+        <AccessRequestSection />
         <DisclaimerSection />
       </main>
       <Footer />
@@ -69,13 +71,13 @@ function HeroSection() {
           {t("hero_subtitle")}
         </p>
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Link
-            href="/auth/register"
+          <a
+            href="#solicitar-acceso"
             className="inline-flex items-center gap-2 bg-white text-primary font-primary font-semibold px-8 py-3.5 rounded-xl hover:bg-light-blue hover:text-dark transition-all shadow-soft"
           >
             {t("hero_cta")}
             <ChevronRight className="w-4 h-4" />
-          </Link>
+          </a>
           <Link
             href="/dashboard"
             className="inline-flex items-center gap-2 bg-white/10 text-white font-primary font-semibold px-8 py-3.5 rounded-xl hover:bg-white/20 transition-all border border-white/20"
@@ -195,13 +197,13 @@ function FeaturesSection() {
             </div>
           ))}
         </div>
-        <Link
-          href="/auth/register"
+        <a
+          href="#solicitar-acceso"
           className="inline-flex items-center gap-2 mt-8 bg-primary text-white font-primary font-semibold px-8 py-3.5 rounded-xl hover:bg-accent transition-all shadow-soft"
         >
           Comenzar ahora
           <ChevronRight className="w-4 h-4" />
-        </Link>
+        </a>
       </div>
     </section>
   );
@@ -238,6 +240,27 @@ function FAQSection() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AccessRequestSection() {
+  const t = useTranslations("landing");
+  return (
+    <section id="solicitar-acceso" className="py-16 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-dark via-primary to-accent">
+      <div className="max-w-2xl mx-auto">
+        <div className="text-center mb-8">
+          <h2 className="text-2xl sm:text-3xl font-primary font-semibold text-white mb-3">
+            {t("access_title")}
+          </h2>
+          <p className="text-sm text-white/80 font-body leading-relaxed">
+            {t("access_subtitle")}
+          </p>
+        </div>
+        <div className="bg-white rounded-2xl shadow-soft p-8">
+          <AccessRequestForm />
         </div>
       </div>
     </section>
