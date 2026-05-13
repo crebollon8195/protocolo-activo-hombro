@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Header } from "@/components/layout/Header";
@@ -15,7 +15,7 @@ import { MilestoneBanner } from "@/components/ui/MilestoneBanner";
 import { Plus, CheckCircle } from "lucide-react";
 
 export default async function DashboardPage() {
-  const t = useTranslations("dashboard");
+  const t = await getTranslations("dashboard");
   const patient = await fetchPatientData();
 
   if (!patient) redirect("/auth/login");

@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { redirect } from "next/navigation";
 import { Header } from "@/components/layout/Header";
 import { buildChartData } from "@/lib/utils/recovery";
@@ -9,7 +9,7 @@ import { fetchPatientData } from "@/lib/data/patient";
 import { BarChart2, Target, CheckSquare, Flame, Trophy, AlertTriangle } from "lucide-react";
 
 export default async function AnalyticsPage() {
-  const t = useTranslations("analytics");
+  const t = await getTranslations("analytics");
   const patient = await fetchPatientData();
 
   if (!patient) redirect("/auth/login");

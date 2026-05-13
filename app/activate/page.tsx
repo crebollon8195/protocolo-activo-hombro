@@ -22,7 +22,7 @@ function ActivateContent() {
   useEffect(() => {
     if (!token) { setStatus("invalid"); return; }
     checkToken();
-  }, [token]);
+  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function checkToken() {
     const { data, error } = await supabase
