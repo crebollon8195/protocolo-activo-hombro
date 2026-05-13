@@ -28,7 +28,7 @@ export function Footer() {
               drcarlosrebollon.com
             </a>
             <p className="text-xs text-white/40 font-body">
-              © {new Date().getFullYear()} Dr. Carlos Rebollón. Todos los derechos reservados.
+              © {new Date().getFullYear()} Hejek Enterprise LLC. Todos los derechos reservados.
             </p>
           </div>
         </div>
