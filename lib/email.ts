@@ -1,7 +1,12 @@
 import { Resend } from "resend";
 
-const resend = new Resend(process.env.RESEND_API_KEY);
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "info@drcarlosrebollon.com";
+
+function getResend() {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) throw new Error("RESEND_API_KEY is not configured");
+  return new Resend(key);
+}
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://protocolo-activo-hombro.vercel.app";
 
 export async function sendAccessRequestNotification(data: {
@@ -10,7 +15,7 @@ export async function sendAccessRequestNotification(data: {
   phone?: string;
   how_found?: string;
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: "Protocolo Activo de Hombro <noreply@drcarlosrebollon.com>",
     to: ADMIN_EMAIL,
     subject: "Nueva solicitud de acceso — Protocolo Activo de Hombro",
@@ -35,7 +40,7 @@ export async function sendInvitationEmail(data: {
   duration_days: number;
 }) {
   const activationLink = `${APP_URL}/activate?token=${data.token}`;
-  return resend.emails.send({
+  return getResend().emails.send({
     from: "Dr. Carlos Rebollón <noreply@drcarlosrebollon.com>",
     to: data.email,
     subject: "Tu acceso al Protocolo Activo de Hombro está listo",
@@ -76,7 +81,7 @@ export async function sendAdminInvitationConfirmation(data: {
   patient_name: string;
   patient_email: string;
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: "Protocolo Activo de Hombro <noreply@drcarlosrebollon.com>",
     to: ADMIN_EMAIL,
     subject: `Invitación enviada a ${data.patient_name}`,
@@ -92,7 +97,7 @@ export async function sendWebhookPatientNotification(data: {
   patient_email: string;
   order_id: string;
 }) {
-  return resend.emails.send({
+  return getResend().emails.send({
     from: "Protocolo Activo de Hombro <noreply@drcarlosrebollon.com>",
     to: ADMIN_EMAIL,
     subject: `Nuevo paciente pagado: ${data.patient_name}`,
