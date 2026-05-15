@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Header } from "@/components/layout/Header";
@@ -15,6 +15,12 @@ import { CheckCircle, Activity } from "lucide-react";
 export default function TrackingPage() {
   const t = useTranslations("tracking");
   const router = useRouter();
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) window.location.href = "/auth/login";
+    });
+  }, []);
 
   const [pain, setPain] = useState(5);
   const [exercises, setExercises] = useState<boolean | null>(null);
@@ -74,7 +80,10 @@ export default function TrackingPage() {
         { onConflict: "user_id,date" }
       );
 
-      if (logError) throw logError;
+      if (logError) {
+        console.error("daily_logs upsert error:", JSON.stringify(logError));
+        throw logError;
+      }
 
       // Recalculate and upsert weekly_progress for this week
       const { data: weekLogs } = await supabase
@@ -104,9 +113,10 @@ export default function TrackingPage() {
       }
 
       setSaved(true);
-    } catch (err) {
-      console.error(err);
-      setError("Error guardando el registro. Intenta de nuevo.");
+    } catch (err: any) {
+      console.error("Tracking save error:", err);
+      const msg = err?.message || err?.details || "Error desconocido";
+      setError(`Error guardando el registro: ${msg}`);
     } finally {
       setLoading(false);
     }

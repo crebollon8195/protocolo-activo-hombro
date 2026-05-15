@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
         email,
         phone: phone || null,
         how_found: how_found || null,
+        status: "pending",
       });
 
     if (withSplit.error) {
@@ -41,6 +42,7 @@ export async function POST(req: NextRequest) {
             email,
             phone: phone || null,
             how_found: how_found || null,
+            status: "pending",
           } as never); // bypass type check for fallback
 
         if (fallback.error) {

@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { supabase } from "@/lib/supabase";
 import { Logo } from "@/components/layout/Logo";
@@ -13,7 +12,6 @@ import { Eye, EyeOff, Mail, Lock, AlertCircle } from "lucide-react";
 
 export default function LoginPage() {
   const t = useTranslations("auth");
-  const router = useRouter();
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState("");
@@ -33,16 +31,25 @@ export default function LoginPage() {
       return;
     }
 
-    if (data.user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", data.user.id)
-        .single();
+    // Auth succeeded — determine destination; default to /dashboard if anything fails
+    let dest = "/dashboard";
 
-      router.push(profile?.role === "admin" ? "/admin" : "/dashboard");
-      router.refresh();
+    if (data.user) {
+      try {
+        // Race profile query against a 3 s timeout so we always redirect
+        const result = await Promise.race([
+          supabase.from("profiles").select("role").eq("id", data.user.id).single(),
+          new Promise<{ data: null; error: null }>((resolve) =>
+            setTimeout(() => resolve({ data: null, error: null }), 3000)
+          ),
+        ]);
+        if (result.data?.role === "admin") dest = "/admin";
+      } catch {
+        // swallow — use default /dashboard
+      }
     }
+
+    window.location.href = dest;
   }
 
   return (

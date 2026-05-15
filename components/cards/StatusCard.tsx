@@ -4,6 +4,7 @@ import { CheckCircle, AlertTriangle, XCircle } from "lucide-react";
 
 interface StatusCardProps {
   patient: Patient;
+  daysMissed: number;
 }
 
 type StatusConfig = {
@@ -15,7 +16,7 @@ type StatusConfig = {
   label: string;
 };
 
-export function StatusCard({ patient }: StatusCardProps) {
+export function StatusCard({ patient, daysMissed }: StatusCardProps) {
   const t = useTranslations("dashboard");
 
   const configs: Record<string, StatusConfig> = {
@@ -51,9 +52,26 @@ export function StatusCard({ patient }: StatusCardProps) {
       iconColor: "text-red-600",
       label: t("status_critical"),
     },
+    // Used when status computes "critical" but patient has logged recently
+    new_or_active: {
+      icon: CheckCircle,
+      bg: "bg-green-50",
+      border: "border-green-200",
+      text: "text-green-800",
+      iconColor: "text-green-600",
+      label: patient.daily_logs.length === 0
+        ? "Bienvenido al programa"
+        : "¡Vas muy bien, sigue así!",
+    },
   };
 
-  const config = configs[patient.status] || configs.stable;
+  // Only show "Necesitas retomar el programa" if 2+ consecutive days missed
+  const effectiveStatus =
+    (patient.status === "critical" || patient.status === "alert") && daysMissed < 2
+      ? "new_or_active"
+      : patient.status;
+
+  const config = configs[effectiveStatus] || configs.stable;
   const Icon = config.icon;
 
   return (

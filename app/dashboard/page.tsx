@@ -12,16 +12,42 @@ import { PainChart } from "@/components/charts/PainChart";
 import { AdherenceChart } from "@/components/charts/AdherenceChart";
 import { fetchPatientData, hasLoggedToday } from "@/lib/data/patient";
 import { MilestoneBanner } from "@/components/ui/MilestoneBanner";
+import { createServerClient } from "@/lib/supabase-server";
 import { Plus, CheckCircle } from "lucide-react";
 
 export default async function DashboardPage() {
   const t = await getTranslations("dashboard");
-  const patient = await fetchPatientData();
 
+  // Redirect admins who land here (e.g. after auth) to the admin panel
+  const supabase = createServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/auth/login");
+  const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+  if (profile?.role === "admin") redirect("/admin");
+
+  const patient = await fetchPatientData();
   if (!patient) redirect("/auth/login");
 
   const loggedToday = await hasLoggedToday(patient.profile.id);
   const chartData = buildChartData(patient.daily_logs);
+
+  // Compute first name — never show the email
+  const rawName = patient.profile.full_name;
+  const nameToken = rawName && !rawName.includes("@")
+    ? rawName.split(" ")[0]
+    : patient.profile.email.split("@")[0].split(".")[0];
+  const firstName = nameToken.charAt(0).toUpperCase() + nameToken.slice(1);
+
+  // Compute consecutive days missed (starting from yesterday backward)
+  const logDates = new Set(patient.daily_logs.map((l) => l.date));
+  let daysMissed = 0;
+  for (let i = 1; i <= 42; i++) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const ds = d.toISOString().split("T")[0];
+    if (logDates.has(ds)) break;
+    daysMissed++;
+  }
 
   return (
     <div className="min-h-screen bg-bg-subtle flex flex-col">
@@ -31,7 +57,7 @@ export default async function DashboardPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div>
             <h1 className="text-2xl font-primary font-semibold text-dark">
-              {t("welcome", { name: patient.profile.full_name.split(" ")[0] })}
+              {t("welcome", { name: firstName })}
             </h1>
             <p className="text-sm text-text-secondary font-body mt-0.5">
               {t("week_progress", { current: patient.current_week, total: 6 })}
@@ -69,7 +95,7 @@ export default async function DashboardPage() {
         <KpiCards patient={patient} />
 
         <div className="mt-6">
-          <StatusCard patient={patient} />
+          <StatusCard patient={patient} daysMissed={daysMissed} />
         </div>
 
         <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">

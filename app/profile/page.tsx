@@ -39,7 +39,7 @@ export default function ProfilePage() {
   async function loadProfile() {
     setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) { window.location.href = "/auth/login"; return; }
 
     const [profileRes, ppRes] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", user.id).single(),
@@ -202,35 +202,6 @@ export default function ProfilePage() {
                   <option value="left">{t("left")}</option>
                   <option value="both">{t("both")}</option>
                 </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-primary font-semibold text-dark">{t("diagnosis")}</Label>
-                <Input
-                  value={data.initial_diagnosis}
-                  onChange={(e) => update("initial_diagnosis", e.target.value)}
-                  className="font-body"
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label className="text-sm font-primary font-semibold text-dark">{t("initial_pain")}</Label>
-                  <Input
-                    type="number"
-                    value={data.initial_pain_score}
-                    onChange={(e) => update("initial_pain_score", Number(e.target.value))}
-                    min={0}
-                    max={10}
-                    className="font-body"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label className="text-sm font-primary font-semibold text-dark">{t("goal")}</Label>
-                <Input
-                  value={data.main_goal}
-                  onChange={(e) => update("main_goal", e.target.value)}
-                  className="font-body"
-                />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">

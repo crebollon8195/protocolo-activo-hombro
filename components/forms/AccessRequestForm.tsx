@@ -1,12 +1,16 @@
 "use client";
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import PhoneInput from "react-phone-number-input";
+import PhoneInput, { isValidPhoneNumber } from "react-phone-number-input";
 import "react-phone-number-input/style.css";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, Loader2, Send } from "lucide-react";
+
+function isValidEmail(email: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
 
 export function AccessRequestForm() {
   const t = useTranslations("landing");
@@ -18,20 +22,48 @@ export function AccessRequestForm() {
   const [howFound, setHowFound] = useState("");
   const [privacy, setPrivacy] = useState(false);
   const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState("");
+  const [serverError, setServerError] = useState("");
+  const [touched, setTouched] = useState({
+    firstName: false,
+    lastName: false,
+    email: false,
+    phone: false,
+    privacy: false,
+  });
+
+  // Inline validation errors
+  const errors = {
+    firstName: touched.firstName && !firstName.trim()
+      ? "Por favor ingresa tu nombre" : "",
+    lastName: touched.lastName && !lastName.trim()
+      ? "Por favor ingresa tu apellido" : "",
+    email: touched.email && !isValidEmail(email)
+      ? "Por favor ingresa un correo electrónico válido" : "",
+    phone: touched.phone && (!phone || !isValidPhoneNumber(phone))
+      ? "Por favor ingresa un número de teléfono válido" : "",
+    privacy: touched.privacy && !privacy
+      ? "Debes aceptar la política de privacidad" : "",
+  };
+
+  const isFormValid =
+    firstName.trim() &&
+    lastName.trim() &&
+    isValidEmail(email) &&
+    phone && isValidPhoneNumber(phone) &&
+    privacy;
+
+  function touch(field: keyof typeof touched) {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setErrorMsg("");
+    setServerError("");
 
-    if (!firstName.trim() || !lastName.trim() || !email.trim()) {
-      setErrorMsg(t("access_required"));
-      return;
-    }
-    if (!privacy) {
-      setErrorMsg(t("access_privacy_required"));
-      return;
-    }
+    // Touch all fields to show errors
+    setTouched({ firstName: true, lastName: true, email: true, phone: true, privacy: true });
+
+    if (!isFormValid) return;
 
     setStatus("sending");
 
@@ -50,14 +82,14 @@ export function AccessRequestForm() {
 
       if (!res.ok) {
         const data = await res.json();
-        setErrorMsg(data.error || t("access_error"));
+        setServerError(data.error || t("access_error"));
         setStatus("error");
         return;
       }
 
       setStatus("done");
     } catch {
-      setErrorMsg(t("access_error"));
+      setServerError(t("access_error"));
       setStatus("error");
     }
   }
@@ -145,7 +177,7 @@ export function AccessRequestForm() {
         }
       `}</style>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} noValidate className="space-y-4">
         {/* Nombre + Apellido */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -156,9 +188,13 @@ export function AccessRequestForm() {
               type="text"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
+              onBlur={() => touch("firstName")}
               placeholder={t("access_first_name_placeholder")}
-              required
+              className={errors.firstName ? "border-red-400 focus-visible:ring-red-300" : ""}
             />
+            {errors.firstName && (
+              <p className="text-xs text-red-600 font-body">{errors.firstName}</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label className="text-sm font-primary font-semibold text-dark">
@@ -168,9 +204,13 @@ export function AccessRequestForm() {
               type="text"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
+              onBlur={() => touch("lastName")}
               placeholder={t("access_last_name_placeholder")}
-              required
+              className={errors.lastName ? "border-red-400 focus-visible:ring-red-300" : ""}
             />
+            {errors.lastName && (
+              <p className="text-xs text-red-600 font-body">{errors.lastName}</p>
+            )}
           </div>
         </div>
 
@@ -183,31 +223,40 @@ export function AccessRequestForm() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            onBlur={() => touch("email")}
             placeholder={t("access_email_placeholder")}
-            required
+            className={errors.email ? "border-red-400 focus-visible:ring-red-300" : ""}
           />
+          {errors.email && (
+            <p className="text-xs text-red-600 font-body">{errors.email}</p>
+          )}
         </div>
 
-        {/* Teléfono con banderas */}
+        {/* Teléfono — required */}
         <div className="space-y-1.5">
           <Label className="text-sm font-primary font-semibold text-dark">
-            {t("access_phone")}
+            {t("access_phone")} <span className="text-red-500">*</span>
           </Label>
           <div className="phone-input-wrapper">
             <PhoneInput
               defaultCountry="PA"
               value={phone}
-              onChange={setPhone}
+              onChange={(val) => { setPhone(val); }}
+              onBlur={() => touch("phone")}
               international
               countryCallingCodeEditable={false}
             />
           </div>
+          {errors.phone && (
+            <p className="text-xs text-red-600 font-body">{errors.phone}</p>
+          )}
         </div>
 
-        {/* ¿Cómo llegaste? */}
+        {/* ¿Cómo llegaste? — optional */}
         <div className="space-y-1.5">
           <Label className="text-sm font-primary font-semibold text-dark">
             {t("access_how")}
+            <span className="text-text-secondary font-normal ml-1">(opcional)</span>
           </Label>
           <Input
             type="text"
@@ -223,7 +272,7 @@ export function AccessRequestForm() {
             id="privacy"
             type="checkbox"
             checked={privacy}
-            onChange={(e) => setPrivacy(e.target.checked)}
+            onChange={(e) => { setPrivacy(e.target.checked); touch("privacy"); }}
             className="mt-0.5 w-4 h-4 accent-primary cursor-pointer"
           />
           <label htmlFor="privacy" className="text-sm text-text-secondary font-body cursor-pointer leading-relaxed">
@@ -238,10 +287,13 @@ export function AccessRequestForm() {
             </a>
           </label>
         </div>
+        {errors.privacy && (
+          <p className="text-xs text-red-600 font-body -mt-2">{errors.privacy}</p>
+        )}
 
-        {(status === "error" || errorMsg) && (
+        {serverError && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-3">
-            <p className="text-sm text-red-700 font-body">{errorMsg}</p>
+            <p className="text-sm text-red-700 font-body">{serverError}</p>
           </div>
         )}
 
@@ -259,6 +311,9 @@ export function AccessRequestForm() {
             </span>
           )}
         </Button>
+        <p className="text-xs text-text-secondary font-body text-center mt-3 leading-relaxed">
+          Revisa tu bandeja de spam o correo no deseado si no recibes el email en 24 horas.
+        </p>
       </form>
     </>
   );

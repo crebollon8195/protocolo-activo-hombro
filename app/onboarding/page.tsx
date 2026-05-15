@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Logo } from "@/components/layout/Logo";
@@ -9,11 +9,18 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ChevronRight, ChevronLeft, ClipboardList, Calendar, BookOpen, Activity, BarChart2, FileText } from "lucide-react";
+import { supabase } from "@/lib/supabase";
 
 export default function OnboardingPage() {
   const t = useTranslations("onboarding");
   const router = useRouter();
   const [step, setStep] = useState(1);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) window.location.href = "/auth/login";
+    });
+  }, []);
   const [slide, setSlide] = useState(0);
   const totalSteps = 3;
 
@@ -90,6 +97,34 @@ export default function OnboardingPage() {
 }
 
 function StepMedicalProfile({ t }: { t: any }) {
+  const [nightPain, setNightPain] = useState<boolean | null>(null);
+  const [mobilityLoss, setMobilityLoss] = useState<boolean | null>(null);
+  const [strengthLoss, setStrengthLoss] = useState<boolean | null>(null);
+
+  function YesNoToggle({ label, value, onChange }: { label: string; value: boolean | null; onChange: (v: boolean) => void }) {
+    return (
+      <div className="space-y-2">
+        <Label className="text-sm font-primary font-semibold text-dark">{label}</Label>
+        <div className="flex gap-3">
+          {([true, false] as const).map((v) => (
+            <button
+              key={String(v)}
+              type="button"
+              onClick={() => onChange(v)}
+              className={`flex-1 py-3 rounded-xl font-primary font-semibold text-sm transition-colors border-2 ${
+                value === v
+                  ? "border-primary bg-primary text-white"
+                  : "border-bg-subtle bg-bg-subtle text-text-secondary hover:border-primary/50"
+              }`}
+            >
+              {v ? "Sí" : "No"}
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
@@ -118,16 +153,8 @@ function StepMedicalProfile({ t }: { t: any }) {
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label className="text-sm font-primary font-semibold text-dark">Diagnóstico inicial</Label>
-          <Input placeholder="Ej: Tendinitis del manguito rotador" />
-        </div>
-        <div className="space-y-1.5">
           <Label className="text-sm font-primary font-semibold text-dark">Nivel de dolor inicial (0–10)</Label>
           <Input type="number" placeholder="7" min="0" max="10" />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-sm font-primary font-semibold text-dark">Objetivo principal</Label>
-          <Input placeholder="Ej: Volver a actividades deportivas sin dolor" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
@@ -145,6 +172,22 @@ function StepMedicalProfile({ t }: { t: any }) {
             </select>
           </div>
         </div>
+
+        <YesNoToggle
+          label="¿Tienes dolor nocturno?"
+          value={nightPain}
+          onChange={setNightPain}
+        />
+        <YesNoToggle
+          label="¿Tienes pérdida del rango de movilidad?"
+          value={mobilityLoss}
+          onChange={setMobilityLoss}
+        />
+        <YesNoToggle
+          label="¿Tienes pérdida de fuerza?"
+          value={strengthLoss}
+          onChange={setStrengthLoss}
+        />
       </div>
     </div>
   );

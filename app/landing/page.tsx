@@ -41,12 +41,12 @@ function LandingHeader() {
           >
             {t("login")}
           </Link>
-          <Link
-            href="/auth/register"
-            className="btn-primary text-sm"
+          <a
+            href="#solicitar-acceso"
+            className="inline-flex items-center gap-1.5 bg-primary hover:bg-dark text-white font-primary font-semibold text-sm px-4 py-2 rounded-xl transition-colors"
           >
-            {t("register")}
-          </Link>
+            Solicitar acceso al programa
+          </a>
         </div>
       </div>
     </header>
@@ -75,7 +75,7 @@ function HeroSection() {
             href="#solicitar-acceso"
             className="inline-flex items-center gap-2 bg-white text-primary font-primary font-semibold px-8 py-3.5 rounded-xl hover:bg-light-blue hover:text-dark transition-all shadow-soft"
           >
-            {t("hero_cta")}
+            Solicitar acceso al programa
             <ChevronRight className="w-4 h-4" />
           </a>
           <Link

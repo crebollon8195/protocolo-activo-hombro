@@ -6,6 +6,7 @@ export interface AdminPatientRow {
   id: string;
   full_name: string;
   email: string;
+  phone: string | null;
   access_active: boolean;
   created_at: string;
   current_week: number;
@@ -45,15 +46,16 @@ function computeStatus(pain: number, adherence: number): PatientStatus {
 
 export async function verifyAdminSession(): Promise<string | null> {
   const supabase = createServerClient();
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) return null;
+  // getUser() validates the JWT with Supabase servers — avoids stale cookie false-positives
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", session.user.id)
+    .eq("id", user.id)
     .single();
   if (profile?.role !== "admin") return null;
-  return session.user.id;
+  return user.id;
 }
 
 export async function fetchAllPatients(): Promise<AdminPatientRow[]> {
@@ -69,15 +71,21 @@ export async function fetchAllPatients(): Promise<AdminPatientRow[]> {
 
   const userIds = profiles.map((p) => p.id);
 
-  const [patientProfilesRes, logsRes, weeklyRes] = await Promise.all([
+  const emails = profiles.map((p) => p.email).filter((e): e is string => Boolean(e));
+
+  const [patientProfilesRes, logsRes, weeklyRes, accessReqRes] = await Promise.all([
     adminClient.from("patient_profiles").select("*").in("user_id", userIds),
     adminClient.from("daily_logs").select("user_id,date,pain_score,exercises_completed").in("user_id", userIds),
     adminClient.from("weekly_progress").select("*").in("user_id", userIds),
+    adminClient.from("access_requests").select("email,phone").in("email", emails),
   ]);
 
   const patientProfiles = patientProfilesRes.data || [];
   const logs = logsRes.data || [];
   const weeklyProgress = weeklyRes.data || [];
+  const phoneByEmail = new Map(
+    (accessReqRes.data || []).map((r) => [r.email, r.phone as string | null])
+  );
 
   return profiles.map((profile) => {
     const pp = patientProfiles.find((p) => p.user_id === profile.id);
@@ -117,6 +125,7 @@ export async function fetchAllPatients(): Promise<AdminPatientRow[]> {
       id: profile.id,
       full_name: profile.full_name || profile.email || "Paciente",
       email: profile.email || "",
+      phone: profile.email ? (phoneByEmail.get(profile.email) ?? null) : null,
       access_active: profile.access_active,
       created_at: profile.created_at,
       current_week: currentWeek,

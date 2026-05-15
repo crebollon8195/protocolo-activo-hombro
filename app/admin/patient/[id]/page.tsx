@@ -1,33 +1,91 @@
-import { useTranslations } from "next-intl";
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { Header } from "@/components/layout/Header";
-import { mockPatients } from "@/lib/mock-data/patients";
+import { createAdminClient } from "@/lib/supabase";
+import { verifyAdminSession } from "@/lib/data/admin";
 import { buildChartData, formatDaysAgo, getStatusColor, getStatusDot } from "@/lib/utils/recovery";
 import { PainChart } from "@/components/charts/PainChart";
 import { AdherenceChart } from "@/components/charts/AdherenceChart";
 import { RecoveryGauge } from "@/components/charts/RecoveryGauge";
-import { ArrowLeft, MessageSquare } from "lucide-react";
+import { DailyLog, WeeklyProgress, PatientStatus } from "@/lib/types";
+import { SendMessageButton } from "@/components/admin/SendMessageButton";
+import { ArrowLeft } from "lucide-react";
 
 interface PageProps {
   params: { id: string };
 }
 
-export default function AdminPatientDetailPage({ params }: PageProps) {
-  const t = useTranslations("admin");
-  const patient = mockPatients.find((p) => p.profile.id === params.id);
+function computeCurrentWeek(startDate: string): number {
+  const start = new Date(startDate);
+  const today = new Date();
+  const daysDiff = Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.min(6, Math.max(1, Math.ceil((daysDiff + 1) / 7)));
+}
 
-  if (!patient) notFound();
+function computeStatus(pain: number, adherence: number): PatientStatus {
+  if (pain <= 3 && adherence >= 70) return "excellent";
+  if (pain <= 5 && adherence >= 50) return "stable";
+  if (pain >= 7 || adherence < 30) return "critical";
+  return "alert";
+}
 
-  const chartData = buildChartData(patient.daily_logs);
-  const completedDays = patient.daily_logs.filter((l) => l.exercises_completed).length;
+const statusLabels: Record<string, string> = {
+  excellent: "Excelente",
+  stable: "Estable",
+  alert: "Alerta",
+  critical: "Requiere seguimiento",
+};
 
-  const statusLabels: Record<string, string> = {
-    excellent: t("status_excellent"),
-    stable: t("status_stable"),
-    alert: t("status_alert"),
-    critical: t("status_critical"),
-  };
+export default async function AdminPatientDetailPage({ params }: PageProps) {
+  const adminId = await verifyAdminSession();
+  if (!adminId) redirect("/auth/login");
+
+  const adminClient = createAdminClient();
+
+  const [profileRes, patientProfileRes, logsRes, weeklyRes] = await Promise.all([
+    adminClient.from("profiles").select("*").eq("id", params.id).single(),
+    adminClient.from("patient_profiles").select("*").eq("user_id", params.id).single(),
+    adminClient.from("daily_logs").select("*").eq("user_id", params.id).order("date", { ascending: true }),
+    adminClient.from("weekly_progress").select("*").eq("user_id", params.id).order("week_number", { ascending: true }),
+  ]);
+
+  if (!profileRes.data) notFound();
+
+  const profile = profileRes.data;
+
+  // Fetch phone from access_requests using the patient's email
+  const { data: accessReq } = await adminClient
+    .from("access_requests")
+    .select("phone")
+    .eq("email", profile.email ?? "")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const patientPhone = accessReq?.phone ?? null;
+  const patientProfile = patientProfileRes.data;
+  const dailyLogs: DailyLog[] = (logsRes.data || []) as DailyLog[];
+  const weeklyProgress: WeeklyProgress[] = (weeklyRes.data || []) as WeeklyProgress[];
+
+  const startDate = patientProfile?.program_start_date || profile.created_at?.split("T")[0] || new Date().toISOString().split("T")[0];
+  const currentWeek = computeCurrentWeek(startDate);
+
+  const lastLog = dailyLogs[dailyLogs.length - 1];
+  const currentPain = lastLog?.pain_score ?? 0;
+  const lastLogDate = lastLog?.date || null;
+
+  const today = new Date();
+  const start = new Date(startDate);
+  const daysElapsed = Math.min(42, Math.floor((today.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+  const completed = dailyLogs.filter((l) => l.exercises_completed).length;
+  const adherence = daysElapsed > 0 ? Math.round((completed / daysElapsed) * 100) : 0;
+
+  const latestWeekly = [...weeklyProgress].sort((a, b) => b.week_number - a.week_number)[0];
+  const recoveryScore = latestWeekly?.recovery_score
+    ?? Math.min(100, Math.round(adherence * 0.6 + Math.max(0, (10 - currentPain)) * 4));
+
+  const status = computeStatus(currentPain, adherence);
+  const chartData = buildChartData(dailyLogs);
+  const completedDays = dailyLogs.filter((l) => l.exercises_completed).length;
 
   return (
     <div className="min-h-screen bg-bg-subtle flex flex-col">
@@ -45,34 +103,35 @@ export default function AdminPatientDetailPage({ params }: PageProps) {
             </Link>
             <div>
               <h1 className="text-xl font-primary font-semibold text-dark">
-                {patient.profile.full_name}
+                {profile.full_name || profile.email}
               </h1>
               <p className="text-sm text-text-secondary font-body">
-                {patient.profile.email} · Semana {patient.current_week}/6
+                {profile.email} · Semana {currentWeek}/6
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             <span
-              className={`inline-flex items-center gap-1.5 text-xs font-primary font-semibold px-3 py-1.5 rounded-full ${getStatusColor(patient.status)}`}
+              className={`inline-flex items-center gap-1.5 text-xs font-primary font-semibold px-3 py-1.5 rounded-full ${getStatusColor(status)}`}
             >
-              <span className={`w-1.5 h-1.5 rounded-full ${getStatusDot(patient.status)}`} />
-              {statusLabels[patient.status]}
+              <span className={`w-1.5 h-1.5 rounded-full ${getStatusDot(status)}`} />
+              {statusLabels[status]}
             </span>
-            <button className="flex items-center gap-2 px-3 py-1.5 bg-primary text-white text-xs font-primary font-semibold rounded-xl hover:bg-dark transition-colors">
-              <MessageSquare className="w-3 h-3" />
-              Enviar mensaje
-            </button>
+            <SendMessageButton
+              patientEmail={profile.email ?? ""}
+              patientName={profile.full_name || profile.email || "Paciente"}
+              patientPhone={patientPhone}
+            />
           </div>
         </div>
 
         {/* Patient info cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
           {[
-            { label: "Dolor actual", value: `${patient.current_pain}/10`, color: patient.current_pain > 6 ? "#ef4444" : patient.current_pain > 3 ? "#eab308" : "#22c55e" },
-            { label: "Adherencia", value: `${patient.adherence_percentage}%`, color: "#0170B9" },
+            { label: "Dolor actual", value: `${currentPain}/10`, color: currentPain > 6 ? "#ef4444" : currentPain > 3 ? "#eab308" : "#22c55e" },
+            { label: "Adherencia", value: `${adherence}%`, color: "#0170B9" },
             { label: "Días completados", value: `${completedDays}/42`, color: "#314C8B" },
-            { label: "Último registro", value: formatDaysAgo(patient.last_log_date), color: "#808285" },
+            { label: "Último registro", value: formatDaysAgo(lastLogDate), color: "#808285" },
           ].map(({ label, value, color }) => (
             <div key={label} className="bg-white rounded-2xl shadow-card p-4">
               <div className="text-xs text-text-secondary font-primary font-semibold mb-1">{label}</div>
@@ -89,97 +148,101 @@ export default function AdminPatientDetailPage({ params }: PageProps) {
           </div>
           <div className="bg-white rounded-2xl shadow-card p-6 flex flex-col items-center">
             <h2 className="text-base font-primary font-semibold text-dark mb-2 self-start">Recovery Score</h2>
-            <RecoveryGauge score={patient.recovery_score} />
+            <RecoveryGauge score={recoveryScore} />
           </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-card p-6 mb-6">
           <h2 className="text-base font-primary font-semibold text-dark mb-4">Adherencia semanal</h2>
-          <AdherenceChart weeklyProgress={patient.weekly_progress} height={200} />
+          <AdherenceChart weeklyProgress={weeklyProgress} height={200} />
         </div>
 
         {/* Daily logs table */}
         <div className="bg-white rounded-2xl shadow-card overflow-hidden mb-6">
-          <div className="px-6 py-4 border-b border-bg-subtle flex items-center justify-between">
+          <div className="px-6 py-4 border-b border-bg-subtle">
             <h2 className="text-base font-primary font-semibold text-dark">
-              Registros diarios ({patient.daily_logs.length})
+              Registros diarios ({dailyLogs.length})
             </h2>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-bg-subtle">
-                <tr>
-                  {["Fecha", "Semana", "Dolor", "Ejercicios", "Movilidad", "Dolor nocturno", "Sueño"].map((col) => (
-                    <th key={col} className="px-4 py-3 text-left text-xs font-primary font-semibold text-text-secondary uppercase tracking-wider">
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-bg-subtle">
-                {[...patient.daily_logs].reverse().slice(0, 14).map((log) => (
-                  <tr key={log.id} className="hover:bg-bg-subtle/50">
-                    <td className="px-4 py-3 text-sm font-body text-dark">{log.date}</td>
-                    <td className="px-4 py-3 text-sm font-body text-dark">S{log.week_number}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className="text-sm font-primary font-bold"
-                        style={{
-                          color: log.pain_score <= 3 ? "#22c55e" : log.pain_score <= 6 ? "#eab308" : "#ef4444",
-                        }}
-                      >
-                        {log.pain_score}/10
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-primary font-semibold px-2 py-0.5 rounded-full ${log.exercises_completed ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                        {log.exercises_completed ? "Sí" : "No"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm font-body text-dark capitalize">{log.mobility_status}</td>
-                    <td className="px-4 py-3">
-                      <span className={`text-xs font-primary font-semibold px-2 py-0.5 rounded-full ${log.night_pain ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
-                        {log.night_pain ? "Sí" : "No"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-sm font-body text-dark capitalize">{log.sleep_quality}</td>
+          {dailyLogs.length === 0 ? (
+            <div className="p-10 text-center">
+              <p className="text-sm text-text-secondary font-body">Aún no hay registros diarios.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-bg-subtle">
+                  <tr>
+                    {["Fecha", "Semana", "Dolor", "Ejercicios", "Movilidad", "Dolor nocturno", "Sueño"].map((col) => (
+                      <th key={col} className="px-4 py-3 text-left text-xs font-primary font-semibold text-text-secondary uppercase tracking-wider">
+                        {col}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-bg-subtle">
+                  {[...dailyLogs].reverse().slice(0, 14).map((log) => (
+                    <tr key={log.id} className="hover:bg-bg-subtle/50">
+                      <td className="px-4 py-3 text-sm font-body text-dark">{log.date}</td>
+                      <td className="px-4 py-3 text-sm font-body text-dark">S{log.week_number}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className="text-sm font-primary font-bold"
+                          style={{
+                            color: log.pain_score <= 3 ? "#22c55e" : log.pain_score <= 6 ? "#eab308" : "#ef4444",
+                          }}
+                        >
+                          {log.pain_score}/10
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-primary font-semibold px-2 py-0.5 rounded-full ${log.exercises_completed ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                          {log.exercises_completed ? "Sí" : "No"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm font-body text-dark capitalize">{log.mobility_status}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-primary font-semibold px-2 py-0.5 rounded-full ${log.night_pain ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                          {log.night_pain ? "Sí" : "No"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm font-body text-dark capitalize">{log.sleep_quality}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Weekly summaries */}
-        <div className="bg-white rounded-2xl shadow-card p-6">
-          <h2 className="text-base font-primary font-semibold text-dark mb-4">Resúmenes semanales</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-            {patient.weekly_progress.map((w) => (
-              <div key={w.week_number} className="bg-bg-subtle rounded-xl p-3">
-                <div className="text-xs text-text-secondary font-primary font-semibold mb-2">
-                  Semana {w.week_number}
+        {weeklyProgress.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-card p-6">
+            <h2 className="text-base font-primary font-semibold text-dark mb-4">Resúmenes semanales</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+              {weeklyProgress.map((w) => (
+                <div key={w.week_number} className="bg-bg-subtle rounded-xl p-3">
+                  <div className="text-xs text-text-secondary font-primary font-semibold mb-2">
+                    Semana {w.week_number}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-xs font-body text-dark">
+                      Dolor: <span className="font-semibold">{w.average_pain}</span>
+                    </div>
+                    <div className="text-xs font-body text-dark">
+                      Adher: <span className="font-semibold">{w.adherence_percentage}%</span>
+                    </div>
+                    <div className="text-xs font-body text-dark">
+                      Score: <span className="font-semibold text-primary">{w.recovery_score}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-1">
-                  <div className="text-xs font-body text-dark">
-                    Dolor: <span className="font-semibold">{w.average_pain}</span>
-                  </div>
-                  <div className="text-xs font-body text-dark">
-                    Adher: <span className="font-semibold">{w.adherence_percentage}%</span>
-                  </div>
-                  <div className="text-xs font-body text-dark">
-                    Score: <span className="font-semibold text-primary">{w.recovery_score}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
       </main>
     </div>
   );
-}
-
-export function generateStaticParams() {
-  return mockPatients.map((p) => ({ id: p.profile.id }));
 }

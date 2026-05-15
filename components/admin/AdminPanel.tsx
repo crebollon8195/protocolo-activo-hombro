@@ -4,9 +4,11 @@ import Link from "next/link";
 import { AdminPatientRow, AccessRequest } from "@/lib/data/admin";
 import { getStatusColor, getStatusDot, formatDaysAgo } from "@/lib/utils/recovery";
 import { InviteModal } from "./InviteModal";
+import { SendMessageButton } from "./SendMessageButton";
+import { supabase } from "@/lib/supabase";
 import {
   Users, Activity, Target, CheckSquare, TrendingUp, Clock,
-  Eye, Send, FileText, UserPlus, CheckCircle, XCircle, AlertTriangle
+  Eye, FileText, UserPlus, CheckCircle, XCircle, AlertTriangle, Trash2
 } from "lucide-react";
 
 interface AdminPanelProps {
@@ -21,21 +23,35 @@ const statusLabels: Record<string, string> = {
   critical: "Requiere seguimiento",
 };
 
+async function getToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  return session?.access_token ?? "";
+}
+
 export function AdminPanel({ patients, requests }: AdminPanelProps) {
   const [showInvite, setShowInvite] = useState(false);
   const [invitePrefill, setInvitePrefill] = useState<{ email: string; name: string; requestId?: string }>({ email: "", name: "" });
 
-  const totalActive = patients.filter((p) => p.access_active).length;
-  const highPain = patients.filter((p) => p.current_pain > 7).length;
-  const lowAdherence = patients.filter((p) => p.adherence_percentage < 50).length;
-  const completing = patients.filter((p) => p.current_week === 6).length;
-  const weeklyActivity = patients.filter((p) => {
+  // Local state for optimistic UI updates after reject/delete
+  const [rejectedIds, setRejectedIds] = useState<Set<string>>(new Set());
+  const [removedPatientIds, setRemovedPatientIds] = useState<Set<string>>(new Set());
+
+  const visiblePatients = patients.filter((p) => !removedPatientIds.has(p.id));
+  const visiblePending = requests.filter(
+    (r) => (!r.status || r.status === "pending") && !rejectedIds.has(r.id)
+  );
+
+  const totalActive = visiblePatients.filter((p) => p.access_active).length;
+  const highPain = visiblePatients.filter((p) => p.current_pain > 7).length;
+  const lowAdherence = visiblePatients.filter((p) => p.adherence_percentage < 50).length;
+  const completing = visiblePatients.filter((p) => p.current_week === 6).length;
+  const weeklyActivity = visiblePatients.filter((p) => {
     if (!p.last_log_date) return false;
     const diff = Math.floor((new Date().getTime() - new Date(p.last_log_date).getTime()) / (1000 * 60 * 60 * 24));
     return diff <= 7;
   }).length;
-  const avgRecovery = patients.length > 0
-    ? Math.round(patients.reduce((s, p) => s + p.recovery_score, 0) / patients.length)
+  const avgRecovery = visiblePatients.length > 0
+    ? Math.round(visiblePatients.reduce((s, p) => s + p.recovery_score, 0) / visiblePatients.length)
     : 0;
 
   const kpis = [
@@ -47,11 +63,34 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
     { icon: TrendingUp, label: "Recovery Score prom.", value: avgRecovery, color: "#314C8B" },
   ];
 
-  const pendingRequests = requests.filter((r) => r.status === "pending");
-
   function openInvite(email = "", name = "", requestId?: string) {
     setInvitePrefill({ email, name, requestId });
     setShowInvite(true);
+  }
+
+  async function handleReject(requestId: string) {
+    const token = await getToken();
+    const res = await fetch("/api/admin/reject-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ requestId }),
+    });
+    if (res.ok) setRejectedIds((prev) => new Set(prev).add(requestId));
+  }
+
+  async function handleDeactivate(patientId: string, patientName: string) {
+    const confirmed = window.confirm(
+      `¿Estás seguro que deseas eliminar el acceso de ${patientName}?\n\nEsta acción desactivará su cuenta y no podrá iniciar sesión.`
+    );
+    if (!confirmed) return;
+
+    const token = await getToken();
+    const res = await fetch("/api/admin/deactivate-patient", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({ patientId }),
+    });
+    if (res.ok) setRemovedPatientIds((prev) => new Set(prev).add(patientId));
   }
 
   return (
@@ -88,16 +127,16 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
       </div>
 
       {/* Pending access requests */}
-      {pendingRequests.length > 0 && (
+      {visiblePending.length > 0 && (
         <div className="bg-white rounded-2xl shadow-card p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <AlertTriangle className="w-5 h-5 text-yellow-500" />
             <h2 className="text-base font-primary font-semibold text-dark">
-              Solicitudes de acceso pendientes ({pendingRequests.length})
+              Solicitudes de acceso pendientes ({visiblePending.length})
             </h2>
           </div>
           <div className="space-y-3">
-            {pendingRequests.map((req) => (
+            {visiblePending.map((req) => (
               <div key={req.id} className="flex items-center gap-4 bg-yellow-50 border border-yellow-200 rounded-xl p-4">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -114,13 +153,22 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
                     {req.how_found && ` · ${req.how_found}`}
                   </div>
                 </div>
-                <button
-                  onClick={() => openInvite(req.email, req.first_name && req.last_name ? `${req.first_name} ${req.last_name}` : req.full_name, req.id)}
-                  className="flex items-center gap-1.5 bg-primary text-white font-primary font-semibold text-xs px-3 py-2 rounded-lg hover:bg-dark transition-colors flex-shrink-0"
-                >
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  Aprobar y enviar acceso
-                </button>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleReject(req.id)}
+                    className="flex items-center gap-1.5 border border-red-300 text-red-600 font-primary font-semibold text-xs px-3 py-2 rounded-lg hover:bg-red-50 transition-colors"
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    Rechazar
+                  </button>
+                  <button
+                    onClick={() => openInvite(req.email, req.first_name && req.last_name ? `${req.first_name} ${req.last_name}` : req.full_name, req.id)}
+                    className="flex items-center gap-1.5 bg-primary text-white font-primary font-semibold text-xs px-3 py-2 rounded-lg hover:bg-dark transition-colors"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Aprobar y enviar acceso
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -128,14 +176,14 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
       )}
 
       {/* Alerts for high-pain or inactive patients */}
-      {(highPain > 0 || patients.some((p) => p.status === "critical")) && (
+      {(highPain > 0 || visiblePatients.some((p) => p.status === "critical")) && (
         <div className="bg-white rounded-2xl shadow-card p-6 mb-6">
           <div className="flex items-center gap-2 mb-4">
             <XCircle className="w-5 h-5 text-red-500" />
             <h2 className="text-base font-primary font-semibold text-dark">Pacientes que requieren atención</h2>
           </div>
           <div className="space-y-3">
-            {patients
+            {visiblePatients
               .filter((p) => p.current_pain > 7 || p.status === "critical")
               .map((p) => (
                 <div key={p.id} className="flex items-center gap-4 bg-red-50 border border-red-200 rounded-xl p-4">
@@ -145,12 +193,21 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
                       Dolor: {p.current_pain}/10 · Adherencia: {p.adherence_percentage}% · Último registro: {formatDaysAgo(p.last_log_date)}
                     </div>
                   </div>
-                  <Link
-                    href={`/admin/patient/${p.id}`}
-                    className="text-xs text-primary hover:text-dark font-primary font-semibold flex-shrink-0"
-                  >
-                    Ver
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/admin/patient/${p.id}`}
+                      className="text-xs text-primary hover:text-dark font-primary font-semibold"
+                    >
+                      Ver
+                    </Link>
+                    <button
+                      onClick={() => handleDeactivate(p.id, p.full_name)}
+                      className="p-1.5 rounded-lg hover:bg-red-100 text-red-500 transition-colors"
+                      title="Eliminar acceso del paciente"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               ))}
           </div>
@@ -161,10 +218,10 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
       <div className="bg-white rounded-2xl shadow-card overflow-hidden">
         <div className="px-6 py-4 border-b border-bg-subtle flex items-center justify-between">
           <h2 className="text-base font-primary font-semibold text-dark">
-            Pacientes ({patients.length})
+            Pacientes ({visiblePatients.length})
           </h2>
         </div>
-        {patients.length === 0 ? (
+        {visiblePatients.length === 0 ? (
           <div className="p-12 text-center">
             <Users className="w-12 h-12 text-text-secondary mx-auto mb-4 opacity-40" />
             <p className="text-text-secondary font-body text-sm">
@@ -184,7 +241,7 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-bg-subtle">
-                {patients.map((patient) => (
+                {visiblePatients.map((patient) => (
                   <tr key={patient.id} className="hover:bg-bg-subtle/50 transition-colors">
                     <td className="px-4 py-4">
                       <div>
@@ -225,24 +282,29 @@ export function AdminPanel({ patients, requests }: AdminPanelProps) {
                         <Link
                           href={`/admin/patient/${patient.id}`}
                           className="p-1.5 rounded-lg hover:bg-primary/10 text-primary transition-colors"
-                          title="Ver progreso"
+                          title="Ver perfil y progreso del paciente"
                         >
                           <Eye className="w-4 h-4" />
                         </Link>
-                        <button
-                          onClick={() => openInvite(patient.email, patient.full_name)}
-                          className="p-1.5 rounded-lg hover:bg-bg-subtle text-text-secondary transition-colors"
-                          title="Reenviar acceso"
-                        >
-                          <Send className="w-4 h-4" />
-                        </button>
+                        <SendMessageButton
+                          patientEmail={patient.email}
+                          patientName={patient.full_name}
+                          patientPhone={patient.phone}
+                        />
                         <Link
                           href={`/report?patient=${patient.id}`}
                           className="p-1.5 rounded-lg hover:bg-bg-subtle text-text-secondary transition-colors"
-                          title="Ver informe"
+                          title="Ver informe clínico PDF"
                         >
                           <FileText className="w-4 h-4" />
                         </Link>
+                        <button
+                          onClick={() => handleDeactivate(patient.id, patient.full_name)}
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600 transition-colors"
+                          title="Eliminar acceso del paciente"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>

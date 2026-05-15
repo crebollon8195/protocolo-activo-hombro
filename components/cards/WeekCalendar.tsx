@@ -1,7 +1,6 @@
 "use client";
 import { useTranslations } from "next-intl";
 import { DailyLog } from "@/lib/types";
-import { CheckCircle, Circle } from "lucide-react";
 
 interface WeekCalendarProps {
   logs: DailyLog[];
@@ -10,6 +9,8 @@ interface WeekCalendarProps {
 export function WeekCalendar({ logs }: WeekCalendarProps) {
   const t = useTranslations("dashboard");
   const today = new Date();
+  const todayStr = today.toISOString().split("T")[0];
+
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(today);
     d.setDate(d.getDate() - 6 + i);
@@ -28,8 +29,11 @@ export function WeekCalendar({ logs }: WeekCalendarProps) {
         {days.map((day) => {
           const dateStr = day.toISOString().split("T")[0];
           const log = logMap.get(dateStr);
-          const isToday = dateStr === today.toISOString().split("T")[0];
-          const isPast = day < today && !isToday;
+          const isToday = dateStr === todayStr;
+          const isFuture = dateStr > todayStr;
+          // For today: fill if any log exists (user logged, regardless of exercises answer)
+          // For past days: only fill if exercises were actually completed
+          const completed = isToday ? !!log : log?.exercises_completed === true;
 
           return (
             <div
@@ -48,12 +52,15 @@ export function WeekCalendar({ logs }: WeekCalendarProps) {
               >
                 {day.getDate()}
               </span>
-              {log?.exercises_completed ? (
-                <CheckCircle className="w-5 h-5 text-green-500" />
-              ) : isPast ? (
-                <Circle className="w-5 h-5 text-text-secondary/30" />
+              {completed ? (
+                // Filled blue circle — completed
+                <div className="w-5 h-5 rounded-full bg-primary" />
+              ) : isFuture ? (
+                // Future day — empty circle, greyed out
+                <div className="w-5 h-5 rounded-full border-2 border-bg-subtle" />
               ) : (
-                <Circle className="w-5 h-5 text-bg-subtle" />
+                // Past or today without completion — empty circle with visible border
+                <div className={`w-5 h-5 rounded-full border-2 ${isToday ? "border-primary/50" : "border-text-secondary/40"}`} />
               )}
             </div>
           );

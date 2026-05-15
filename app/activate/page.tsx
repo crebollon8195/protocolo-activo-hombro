@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Logo } from "@/components/layout/Logo";
 import { Input } from "@/components/ui/input";
@@ -10,11 +10,11 @@ import { CheckCircle, XCircle, Lock, Loader2 } from "lucide-react";
 
 function ActivateContent() {
   const params = useSearchParams();
-  const router = useRouter();
   const token = params.get("token");
 
   const [status, setStatus] = useState<"checking" | "valid" | "invalid" | "creating" | "done">("checking");
-  const [invitation, setInvitation] = useState<any>(null);
+  const [invitation, setInvitation] = useState<{ email: string; access_type: string } | null>(null);
+  const [invalidReason, setInvalidReason] = useState("Este link ya fue usado, expiró, o no es válido.");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,17 +25,18 @@ function ActivateContent() {
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function checkToken() {
-    const { data, error } = await supabase
+    // Read invitation client-side just to pre-fill the email and validate UX
+    const { data, error: err } = await supabase
       .from("invitations")
-      .select("*")
+      .select("email, access_type, used, expires_at")
       .eq("token", token!)
       .single();
 
-    if (error || !data) { setStatus("invalid"); return; }
-    if (data.used) { setStatus("invalid"); return; }
-    if (new Date(data.expires_at) < new Date()) { setStatus("invalid"); return; }
+    if (err || !data) { setInvalidReason("Token no encontrado."); setStatus("invalid"); return; }
+    if (data.used) { setInvalidReason("Este link ya fue usado."); setStatus("invalid"); return; }
+    if (new Date(data.expires_at) < new Date()) { setInvalidReason("Este link ha expirado. Contacta al doctor para recibir uno nuevo."); setStatus("invalid"); return; }
 
-    setInvitation(data);
+    setInvitation({ email: data.email, access_type: data.access_type });
     setStatus("valid");
   }
 
@@ -48,33 +49,46 @@ function ActivateContent() {
 
     setStatus("creating");
 
-    // Create user in Supabase Auth
-    const { data: authData, error: signUpError } = await supabase.auth.signUp({
-      email: invitation.email,
-      password,
+    // API route handles: create/update auth user, upsert profile, mark invitation used
+    const res = await fetch("/api/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, password }),
     });
 
-    if (signUpError || !authData.user) {
-      setError(signUpError?.message || "Error creando cuenta. Intenta de nuevo.");
+    const result = await res.json();
+
+    if (!res.ok) {
+      setError(result.error || "Error activando cuenta. Intenta de nuevo.");
       setStatus("valid");
       return;
     }
 
-    // Create profile
-    await supabase.from("profiles").insert({
-      id: authData.user.id,
-      email: invitation.email,
-      full_name: "",
-      role: "patient",
-      access_active: true,
-      access_type: invitation.access_type,
+    // Immediately sign in so the session cookie is established
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: result.email,
+      password,
     });
 
-    // Mark token as used
-    await supabase.from("invitations").update({ used: true }).eq("token", token!);
+    if (signInError) {
+      setError("Cuenta creada pero no se pudo iniciar sesión. Ve a /auth/login.");
+      setStatus("valid");
+      return;
+    }
 
     setStatus("done");
-    setTimeout(() => router.push("/onboarding"), 2000);
+
+    // Check role to decide where to send them
+    const { data: { user } } = await supabase.auth.getUser();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user!.id)
+      .single();
+
+    setTimeout(() => {
+      window.location.href = profile?.role === "admin" ? "/admin" : "/onboarding";
+    }, 1800);
   }
 
   return (
@@ -99,9 +113,7 @@ function ActivateContent() {
                   <XCircle className="w-6 h-6 text-red-500" />
                 </div>
                 <h1 className="text-xl font-primary font-semibold text-dark mb-2">Link inválido o expirado</h1>
-                <p className="text-sm text-text-secondary font-body mb-4">
-                  Este link ya fue usado, expiró, o no es válido.
-                </p>
+                <p className="text-sm text-text-secondary font-body mb-4">{invalidReason}</p>
                 <p className="text-sm text-text-secondary font-body">
                   Contacta a{" "}
                   <a href="mailto:info@drcarlosrebollon.com" className="text-primary font-semibold">
@@ -111,7 +123,7 @@ function ActivateContent() {
               </div>
             )}
 
-            {(status === "valid" || status === "creating") && (
+            {(status === "valid" || status === "creating") && invitation && (
               <>
                 <div className="text-center mb-8">
                   <div className="w-12 h-12 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
@@ -119,7 +131,8 @@ function ActivateContent() {
                   </div>
                   <h1 className="text-xl font-primary font-semibold text-dark">Activar tu cuenta</h1>
                   <p className="text-sm text-text-secondary font-body mt-1">
-                    Crea una contraseña para <strong>{invitation?.email}</strong>
+                    Crea una contraseña para acceder con{" "}
+                    <strong className="text-dark">{invitation.email}</strong>
                   </p>
                 </div>
 
@@ -132,14 +145,33 @@ function ActivateContent() {
                 <form onSubmit={handleActivate} className="space-y-4">
                   <div className="space-y-1.5">
                     <Label className="text-sm font-primary font-semibold text-dark">Contraseña</Label>
-                    <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Mínimo 8 caracteres" required />
+                    <Input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Mínimo 8 caracteres"
+                      required
+                      autoFocus
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-sm font-primary font-semibold text-dark">Confirmar contraseña</Label>
-                    <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Repite la contraseña" required />
+                    <Input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repite la contraseña"
+                      required
+                    />
                   </div>
-                  <Button type="submit" className="w-full bg-primary hover:bg-dark text-white font-primary font-semibold py-2.5 rounded-xl" disabled={status === "creating"}>
-                    {status === "creating" ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : "Activar mi cuenta"}
+                  <Button
+                    type="submit"
+                    className="w-full bg-primary hover:bg-dark text-white font-primary font-semibold py-2.5 rounded-xl"
+                    disabled={status === "creating"}
+                  >
+                    {status === "creating"
+                      ? <Loader2 className="w-4 h-4 animate-spin mx-auto" />
+                      : "Activar mi cuenta"}
                   </Button>
                 </form>
               </>
@@ -151,7 +183,7 @@ function ActivateContent() {
                   <CheckCircle className="w-6 h-6 text-green-600" />
                 </div>
                 <h1 className="text-xl font-primary font-semibold text-dark mb-2">¡Cuenta activada!</h1>
-                <p className="text-sm text-text-secondary font-body">Redirigiendo a tu perfil...</p>
+                <p className="text-sm text-text-secondary font-body">Redirigiendo al programa...</p>
               </div>
             )}
 
@@ -164,7 +196,11 @@ function ActivateContent() {
 
 export default function ActivatePage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    }>
       <ActivateContent />
     </Suspense>
   );

@@ -16,7 +16,7 @@ export async function sendAccessRequestNotification(data: {
   how_found?: string;
 }) {
   return getResend().emails.send({
-    from: "Protocolo Activo de Hombro <noreply@drcarlosrebollon.com>",
+    from: "Protocolo Activo de Hombro <info@drcarlosrebollon.com>",
     to: ADMIN_EMAIL,
     subject: "Nueva solicitud de acceso — Protocolo Activo de Hombro",
     html: `
@@ -41,7 +41,7 @@ export async function sendInvitationEmail(data: {
 }) {
   const activationLink = `${APP_URL}/activate?token=${data.token}`;
   return getResend().emails.send({
-    from: "Dr. Carlos Rebollón <noreply@drcarlosrebollon.com>",
+    from: "Dr. Carlos Rebollón <info@drcarlosrebollon.com>",
     to: data.email,
     subject: "Tu acceso al Protocolo Activo de Hombro está listo",
     html: `
@@ -82,7 +82,7 @@ export async function sendAdminInvitationConfirmation(data: {
   patient_email: string;
 }) {
   return getResend().emails.send({
-    from: "Protocolo Activo de Hombro <noreply@drcarlosrebollon.com>",
+    from: "Protocolo Activo de Hombro <info@drcarlosrebollon.com>",
     to: ADMIN_EMAIL,
     subject: `Invitación enviada a ${data.patient_name}`,
     html: `
@@ -98,7 +98,7 @@ export async function sendWebhookPatientNotification(data: {
   order_id: string;
 }) {
   return getResend().emails.send({
-    from: "Protocolo Activo de Hombro <noreply@drcarlosrebollon.com>",
+    from: "Protocolo Activo de Hombro <info@drcarlosrebollon.com>",
     to: ADMIN_EMAIL,
     subject: `Nuevo paciente pagado: ${data.patient_name}`,
     html: `

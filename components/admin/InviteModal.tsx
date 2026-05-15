@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,9 +28,15 @@ export function InviteModal({ onClose, prefillEmail = "", prefillName = "", requ
     setErrorMsg("");
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token ?? "";
+
       const res = await fetch("/api/invite", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           email,
           full_name: fullName,
@@ -113,6 +120,14 @@ export function InviteModal({ onClose, prefillEmail = "", prefillName = "", requ
               <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Ej: Referido Dr. López" />
             </div>
 
+            {accessType === "paid" && (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                <p className="text-sm text-yellow-800 font-body leading-relaxed">
+                  El link de activación se enviará automáticamente después de que el paciente complete el pago.
+                </p>
+              </div>
+            )}
+
             {errorMsg && (
               <div className="bg-red-50 border border-red-200 rounded-xl p-3">
                 <p className="text-sm text-red-700 font-body">{errorMsg}</p>
@@ -121,11 +136,13 @@ export function InviteModal({ onClose, prefillEmail = "", prefillName = "", requ
 
             <Button
               onClick={handleSend}
-              disabled={status === "sending"}
-              className="w-full bg-primary hover:bg-dark text-white font-primary font-semibold py-3 rounded-xl"
+              disabled={status === "sending" || accessType === "paid"}
+              className="w-full bg-primary hover:bg-dark text-white font-primary font-semibold py-3 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {status === "sending" ? (
                 <Loader2 className="w-4 h-4 animate-spin mx-auto" />
+              ) : accessType === "paid" ? (
+                "Pendiente de pago"
               ) : (
                 <span className="flex items-center justify-center gap-2">
                   <Send className="w-4 h-4" />
