@@ -44,6 +44,7 @@ const config: Config = {
         primary: ["Montserrat", "sans-serif"],
         secondary: ["Roboto Slab", "serif"],
         body: ["Montserrat", "sans-serif"],
+        display: ["Playfair Display", "Georgia", "serif"],
       },
       boxShadow: {
         card: "0px 0px 4px 0 rgba(0,0,0,0.34)",
