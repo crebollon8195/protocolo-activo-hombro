@@ -582,8 +582,10 @@ function AuthoritySection() {
 /* ── S11. PRICING ────────────────────────────────────────────────────────── */
 function PricingSection() {
   const t = useTranslations("landing");
-  const sharedFeatures = ["price_f1","price_f2","price_f3","price_f4","price_f5"] as const;
-  const trackerFeatures = ["price_t1","price_t2","price_t3","price_t4"] as const;
+  // First 4 items are included in BOTH plans
+  const baseFeatures = ["price_f1","price_f2","price_f3","price_f4"] as const;
+  // These 5 items are included ONLY in the complete plan (shown as ✗ in basic)
+  const premiumFeatures = ["price_f5","price_t1","price_t2","price_t3","price_t4"] as const;
 
   return (
     <section className="bg-white py-20 sm:py-24 px-4 sm:px-6 lg:px-8">
@@ -610,13 +612,13 @@ function PricingSection() {
                 {t("price_basic_price")}
               </p>
               <ul className="space-y-3 mb-6 flex-1">
-                {sharedFeatures.map((key) => (
+                {baseFeatures.map((key) => (
                   <li key={key} className="flex items-start gap-2.5">
                     <Check className="w-4 h-4 text-[#0170B9] flex-shrink-0 mt-0.5" />
                     <span className="font-primary text-sm text-dark">{t(key)}</span>
                   </li>
                 ))}
-                {trackerFeatures.map((key) => (
+                {premiumFeatures.map((key) => (
                   <li key={key} className="flex items-start gap-2.5 opacity-40">
                     <X className="w-4 h-4 text-[#808285] flex-shrink-0 mt-0.5" />
                     <span className="font-primary text-sm text-text-secondary">{t(key)}</span>
@@ -652,13 +654,13 @@ function PricingSection() {
                 {t("price_complete_price")}
               </p>
               <ul className="space-y-3 mb-6 flex-1">
-                {sharedFeatures.map((key) => (
+                {baseFeatures.map((key) => (
                   <li key={key} className="flex items-start gap-2.5">
                     <Check className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#0170B9" }} />
                     <span className="font-primary text-sm text-dark">{t(key)}</span>
                   </li>
                 ))}
-                {trackerFeatures.map((key) => (
+                {premiumFeatures.map((key) => (
                   <li key={key} className="flex items-start gap-2.5">
                     <Check className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#0170B9" }} />
                     <span className="font-primary text-sm font-semibold text-dark">{t(key)}</span>
