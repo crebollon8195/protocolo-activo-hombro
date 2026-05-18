@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase";
 import { emailTemplate, ctaButton, statRow, firstName } from "@/lib/email-templates";
+import type { SequenceResult } from "./welcome";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tracker.drcarlosrebollon.com";
 const FROM    = "Dr. Carlos Rebollón <noreply@drcarlosrebollon.com>";
@@ -11,35 +12,52 @@ function resend() {
   return new Resend(key);
 }
 
-interface Result { sent: number; skipped: number; errors: number }
+export async function runWeeklySummarySequence(testEmail?: string): Promise<SequenceResult> {
+  const db      = createAdminClient();
+  const r       = resend();
+  const now     = new Date();
+  const isTest  = Boolean(testEmail);
+  const details: string[] = [];
 
-export async function runWeeklySummarySequence(): Promise<Result> {
-  const db  = createAdminClient();
-  const r   = resend();
-  const now = new Date();
+  // Only run on Mondays in production
+  if (!isTest && now.getDay() !== 1) {
+    details.push("[weekly-summary] Skipped: not Monday.");
+    return { sent: 0, skipped: 0, errors: 0, details };
+  }
 
-  // Only run on Mondays
-  if (now.getDay() !== 1) return { sent: 0, skipped: 0, errors: 0 };
+  if (isTest) details.push("[weekly-summary][TEST] Monday check bypassed.");
 
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split("T")[0];
   const todayStr = now.toISOString().split("T")[0];
 
-  // All active patients
-  const { data: profiles, error } = await db
+  // All active patients (test mode: just the first one)
+  let query = db
     .from("profiles")
     .select("id, full_name, email")
     .eq("role", "patient")
     .eq("access_active", true);
 
+  if (isTest) query = (query as any).limit(1);
+
+  const { data: profiles, error } = await query;
+
   if (error) throw new Error(`[weekly-summary] DB query failed: ${error.message}`);
-  if (!profiles?.length) return { sent: 0, skipped: 0, errors: 0 };
+
+  if (!profiles?.length) {
+    details.push("[weekly-summary] No active patients found.");
+    return { sent: 0, skipped: 0, errors: 0, details };
+  }
 
   let sent = 0, skipped = 0, errors = 0;
 
   for (const profile of profiles) {
-    if (!profile.email) { skipped++; continue; }
+    if (!profile.email) {
+      details.push(`[weekly-summary] Skipped ${profile.id}: no email address.`);
+      skipped++;
+      continue;
+    }
 
     try {
       // Logs from last 7 days
@@ -51,7 +69,26 @@ export async function runWeeklySummarySequence(): Promise<Result> {
         .lte("date", todayStr)
         .order("date", { ascending: false });
 
-      if (!recentLogs?.length) { skipped++; continue; }
+      // In test mode fall back to all available logs if none exist in last 7 days
+      let logsToUse = recentLogs ?? [];
+      if (isTest && !logsToUse.length) {
+        const { data: allLogs } = await db
+          .from("daily_logs")
+          .select("date, pain_score")
+          .eq("user_id", profile.id)
+          .order("date", { ascending: false })
+          .limit(7);
+        logsToUse = allLogs ?? [];
+        if (logsToUse.length) {
+          details.push(`[weekly-summary][TEST] No logs in last 7 days; using ${logsToUse.length} most recent logs.`);
+        }
+      }
+
+      if (!logsToUse.length) {
+        details.push(`[weekly-summary] Skipped ${profile.email}: no logs found.`);
+        skipped++;
+        continue;
+      }
 
       // Logs from previous 7 days (for trend)
       const fourteenDaysAgo = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000)
@@ -69,14 +106,18 @@ export async function runWeeklySummarySequence(): Promise<Result> {
         .lte("date", eightDaysAgo);
 
       // Stat calculations
-      const validScores = recentLogs
+      const validScores = logsToUse
         .map(l => l.pain_score)
         .filter((s): s is number => s !== null && s !== undefined);
 
-      if (!validScores.length) { skipped++; continue; }
+      if (!validScores.length) {
+        details.push(`[weekly-summary] Skipped ${profile.email}: logs have no pain_score data.`);
+        skipped++;
+        continue;
+      }
 
       const avgPain    = validScores.reduce((a, b) => a + b, 0) / validScores.length;
-      const daysLogged = recentLogs.length;
+      const daysLogged = logsToUse.length;
       const adherence  = Math.round((daysLogged / 7) * 100);
 
       const prevScores = (prevLogs ?? [])
@@ -86,8 +127,8 @@ export async function runWeeklySummarySequence(): Promise<Result> {
         ? prevScores.reduce((a, b) => a + b, 0) / prevScores.length
         : null;
 
-      const trendDiff   = prevAvg !== null ? avgPain - prevAvg : null;
-      const trendText   =
+      const trendDiff = prevAvg !== null ? avgPain - prevAvg : null;
+      const trendText =
         trendDiff === null  ? "Sin datos previos" :
         trendDiff < -0.5    ? `↓ ${Math.abs(trendDiff).toFixed(1)} pts mejor que la semana pasada` :
         trendDiff > 0.5     ? `↑ ${trendDiff.toFixed(1)} pts más alto que la semana pasada` :
@@ -100,13 +141,13 @@ export async function runWeeklySummarySequence(): Promise<Result> {
         .eq("id", profile.id)
         .maybeSingle();
 
-      const startDate   = patientProfile?.program_start_date
+      const startDate      = patientProfile?.program_start_date
         ? new Date(patientProfile.program_start_date)
         : null;
       const daysSinceStart = startDate
         ? Math.floor((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
         : null;
-      const weekNumber  = daysSinceStart !== null
+      const weekNumber     = daysSinceStart !== null
         ? Math.min(Math.ceil(daysSinceStart / 7), 6)
         : null;
 
@@ -125,17 +166,23 @@ export async function runWeeklySummarySequence(): Promise<Result> {
         ? `weekly_summary_week_${weekNumber}`
         : "weekly_summary";
 
-      // Idempotency check
-      const { data: existing } = await (db as any)
-        .from("email_logs")
-        .select("id")
-        .eq("user_id", profile.id)
-        .eq("email_type", emailType)
-        .maybeSingle();
+      if (!isTest) {
+        // Idempotency check
+        const { data: existing } = await (db as any)
+          .from("email_logs")
+          .select("id")
+          .eq("user_id", profile.id)
+          .eq("email_type", emailType)
+          .maybeSingle();
 
-      if (existing) { skipped++; continue; }
+        if (existing) {
+          details.push(`[weekly-summary] Skipped ${profile.email}: ${emailType} already sent.`);
+          skipped++;
+          continue;
+        }
+      }
 
-      const name = firstName(profile.full_name);
+      const name      = firstName(profile.full_name);
       const weekLabel = weekNumber ? `Semana ${weekNumber}` : "Resumen semanal";
 
       // Milestone messages
@@ -204,26 +251,38 @@ export async function runWeeklySummarySequence(): Promise<Result> {
         </p>
       `;
 
+      const subjectRaw = `Tu resumen — ${weekLabel}, ${name}`;
+      const subject    = isTest ? `[TEST] ${subjectRaw}` : subjectRaw;
+      const recipient  = isTest ? testEmail! : profile.email;
+
       await r.emails.send({
         from:    FROM,
-        to:      profile.email,
-        subject: `Tu resumen — ${weekLabel}, ${name}`,
+        to:      recipient,
+        subject,
         html:    emailTemplate(body),
       });
 
-      await (db as any).from("email_logs").insert({
-        user_id:    profile.id,
-        email_type: emailType,
-        sent_at:    now.toISOString(),
-        metadata:   { email: profile.email, name, week_number: weekNumber, avg_pain: avgPain, adherence },
-      });
+      if (!isTest) {
+        await (db as any).from("email_logs").insert({
+          user_id:    profile.id,
+          email_type: emailType,
+          sent_at:    now.toISOString(),
+          metadata:   { email: profile.email, name, week_number: weekNumber, avg_pain: avgPain, adherence },
+        });
+      }
 
+      details.push(
+        `[weekly-summary]${isTest ? "[TEST]" : ""} Sent ${emailType} to ${recipient} — ` +
+        `patient: ${profile.full_name ?? profile.id}, avg_pain: ${avgPain.toFixed(1)}, adherence: ${adherence}%`
+      );
       sent++;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      details.push(`[weekly-summary] Error for ${profile.email}: ${msg}`);
       console.error(`[weekly-summary] Failed for ${profile.email}:`, err);
       errors++;
     }
   }
 
-  return { sent, skipped, errors };
+  return { sent, skipped, errors, details };
 }

@@ -11,43 +11,76 @@ function resend() {
   return new Resend(key);
 }
 
-interface Result { sent: number; skipped: number; errors: number }
+export interface SequenceResult {
+  sent: number;
+  skipped: number;
+  errors: number;
+  details: string[];
+}
 
-export async function runWelcomeSequence(): Promise<Result> {
-  const db  = createAdminClient();
-  const r   = resend();
-  const now = new Date();
+export async function runWelcomeSequence(testEmail?: string): Promise<SequenceResult> {
+  const db      = createAdminClient();
+  const r       = resend();
+  const now     = new Date();
+  const isTest  = Boolean(testEmail);
+  const details: string[] = [];
 
-  // Profiles created within the last 25 hours, active patients only
-  const since = new Date(now.getTime() - 25 * 60 * 60 * 1000).toISOString();
-
-  const { data: profiles, error } = await db
+  let query = db
     .from("profiles")
     .select("id, full_name, email, created_at")
     .eq("role", "patient")
-    .eq("access_active", true)
-    .gte("created_at", since);
+    .eq("access_active", true);
+
+  if (!isTest) {
+    // Production: only profiles created in the last 25 hours
+    const since = new Date(now.getTime() - 25 * 60 * 60 * 1000).toISOString();
+    query = query.gte("created_at", since);
+  } else {
+    // Test mode: just grab the first active patient
+    query = (query as any).limit(1);
+  }
+
+  const { data: profiles, error } = await query;
 
   if (error) throw new Error(`[welcome] DB query failed: ${error.message}`);
-  if (!profiles?.length) return { sent: 0, skipped: 0, errors: 0 };
+
+  if (!profiles?.length) {
+    details.push(isTest
+      ? "[welcome][TEST] No active patients found in the database."
+      : "[welcome] No new patients in the last 25h.");
+    return { sent: 0, skipped: 0, errors: 0, details };
+  }
 
   let sent = 0, skipped = 0, errors = 0;
 
   for (const profile of profiles) {
-    if (!profile.email) { skipped++; continue; }
+    if (!profile.email) {
+      details.push(`[welcome] Skipped ${profile.id}: no email address.`);
+      skipped++;
+      continue;
+    }
 
     try {
-      // Idempotency check — never send welcome twice
-      const { data: existing } = await (db as any)
-        .from("email_logs")
-        .select("id")
-        .eq("user_id", profile.id)
-        .eq("email_type", "welcome")
-        .maybeSingle();
+      if (!isTest) {
+        // Idempotency check — never send welcome twice in production
+        const { data: existing } = await (db as any)
+          .from("email_logs")
+          .select("id")
+          .eq("user_id", profile.id)
+          .eq("email_type", "welcome")
+          .maybeSingle();
 
-      if (existing) { skipped++; continue; }
+        if (existing) {
+          details.push(`[welcome] Skipped ${profile.email}: already sent.`);
+          skipped++;
+          continue;
+        }
+      }
 
-      const name = firstName(profile.full_name);
+      const name       = firstName(profile.full_name);
+      const recipient  = isTest ? testEmail! : profile.email;
+      const subjectRaw = `Tu protocolo de 42 días comienza hoy, ${name}`;
+      const subject    = isTest ? `[TEST] ${subjectRaw}` : subjectRaw;
 
       const body = `
         <p style="font-size:16px;color:#374151;margin:0 0 16px;">
@@ -79,24 +112,31 @@ export async function runWelcomeSequence(): Promise<Result> {
 
       await r.emails.send({
         from:    FROM,
-        to:      profile.email,
-        subject: `Tu protocolo de 42 días comienza hoy, ${name}`,
+        to:      recipient,
+        subject,
         html:    emailTemplate(body),
       });
 
-      await (db as any).from("email_logs").insert({
-        user_id:    profile.id,
-        email_type: "welcome",
-        sent_at:    now.toISOString(),
-        metadata:   { email: profile.email, name },
-      });
+      if (!isTest) {
+        await (db as any).from("email_logs").insert({
+          user_id:    profile.id,
+          email_type: "welcome",
+          sent_at:    now.toISOString(),
+          metadata:   { email: profile.email, name },
+        });
+      }
 
+      details.push(
+        `[welcome]${isTest ? "[TEST]" : ""} Sent to ${recipient} using patient data: ${profile.full_name ?? "unknown"} (${profile.id})`
+      );
       sent++;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      details.push(`[welcome] Error for ${profile.email}: ${msg}`);
       console.error(`[welcome] Failed for ${profile.email}:`, err);
       errors++;
     }
   }
 
-  return { sent, skipped, errors };
+  return { sent, skipped, errors, details };
 }

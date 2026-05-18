@@ -1,6 +1,7 @@
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase";
 import { emailTemplate, ctaButton, firstName } from "@/lib/email-templates";
+import type { SequenceResult } from "./welcome";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tracker.drcarlosrebollon.com";
 const FROM    = "Dr. Carlos Rebollón <noreply@drcarlosrebollon.com>";
@@ -10,8 +11,6 @@ function resend() {
   if (!key) throw new Error("RESEND_API_KEY not configured");
   return new Resend(key);
 }
-
-interface Result { sent: number; skipped: number; errors: number }
 
 type InactivityDay = 3 | 5 | 7;
 
@@ -99,25 +98,39 @@ function emailConfig(day: InactivityDay, name: string): { subject: string; body:
   };
 }
 
-export async function runInactivitySequence(): Promise<Result> {
-  const db  = createAdminClient();
-  const r   = resend();
-  const now = new Date();
+export async function runInactivitySequence(testEmail?: string): Promise<SequenceResult> {
+  const db      = createAdminClient();
+  const r       = resend();
+  const now     = new Date();
+  const isTest  = Boolean(testEmail);
+  const details: string[] = [];
 
-  // All active patients
-  const { data: profiles, error } = await db
+  // All active patients (test mode: just the first one)
+  let query = db
     .from("profiles")
     .select("id, full_name, email")
     .eq("role", "patient")
     .eq("access_active", true);
 
+  if (isTest) query = (query as any).limit(1);
+
+  const { data: profiles, error } = await query;
+
   if (error) throw new Error(`[inactivity] DB query failed: ${error.message}`);
-  if (!profiles?.length) return { sent: 0, skipped: 0, errors: 0 };
+
+  if (!profiles?.length) {
+    details.push("[inactivity] No active patients found.");
+    return { sent: 0, skipped: 0, errors: 0, details };
+  }
 
   let sent = 0, skipped = 0, errors = 0;
 
   for (const profile of profiles) {
-    if (!profile.email) { skipped++; continue; }
+    if (!profile.email) {
+      details.push(`[inactivity] Skipped ${profile.id}: no email address.`);
+      skipped++;
+      continue;
+    }
 
     try {
       // Get the most recent daily_log date for this user
@@ -129,54 +142,86 @@ export async function runInactivitySequence(): Promise<Result> {
         .limit(1)
         .maybeSingle();
 
-      if (!lastLog?.date) { skipped++; continue; }
+      if (!lastLog?.date) {
+        details.push(`[inactivity] Skipped ${profile.email}: no daily logs found.`);
+        skipped++;
+        continue;
+      }
 
-      const lastDate = new Date(lastLog.date);
-      const diffMs   = now.getTime() - lastDate.getTime();
-      const daysInactive = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      let triggerDay: InactivityDay;
 
-      const triggerDay =
-        daysInactive === 3 ? 3 :
-        daysInactive === 5 ? 5 :
-        daysInactive === 7 ? 7 : null;
+      if (isTest) {
+        // Test mode: always send the day-3 template regardless of actual inactivity
+        triggerDay = 3;
+        details.push(`[inactivity][TEST] Using day-3 template (last log: ${lastLog.date}).`);
+      } else {
+        const lastDate     = new Date(lastLog.date);
+        const diffMs       = now.getTime() - lastDate.getTime();
+        const daysInactive = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
-      if (!triggerDay) { skipped++; continue; }
+        const day =
+          daysInactive === 3 ? 3 :
+          daysInactive === 5 ? 5 :
+          daysInactive === 7 ? 7 : null;
+
+        if (!day) {
+          details.push(`[inactivity] Skipped ${profile.email}: inactive ${daysInactive}d (not a trigger day).`);
+          skipped++;
+          continue;
+        }
+        triggerDay = day as InactivityDay;
+      }
 
       const emailType = `inactivity_day${triggerDay}` as string;
 
-      // Idempotency check
-      const { data: existing } = await (db as any)
-        .from("email_logs")
-        .select("id")
-        .eq("user_id", profile.id)
-        .eq("email_type", emailType)
-        .maybeSingle();
+      if (!isTest) {
+        // Idempotency check
+        const { data: existing } = await (db as any)
+          .from("email_logs")
+          .select("id")
+          .eq("user_id", profile.id)
+          .eq("email_type", emailType)
+          .maybeSingle();
 
-      if (existing) { skipped++; continue; }
+        if (existing) {
+          details.push(`[inactivity] Skipped ${profile.email}: ${emailType} already sent.`);
+          skipped++;
+          continue;
+        }
+      }
 
-      const name = firstName(profile.full_name);
-      const { subject, body } = emailConfig(triggerDay as InactivityDay, name);
+      const name      = firstName(profile.full_name);
+      const { subject: subjectRaw, body } = emailConfig(triggerDay, name);
+      const subject   = isTest ? `[TEST] ${subjectRaw}` : subjectRaw;
+      const recipient = isTest ? testEmail! : profile.email;
 
       await r.emails.send({
         from:    FROM,
-        to:      profile.email,
+        to:      recipient,
         subject,
         html:    emailTemplate(body),
       });
 
-      await (db as any).from("email_logs").insert({
-        user_id:    profile.id,
-        email_type: emailType,
-        sent_at:    now.toISOString(),
-        metadata:   { email: profile.email, name, days_inactive: daysInactive },
-      });
+      if (!isTest) {
+        await (db as any).from("email_logs").insert({
+          user_id:    profile.id,
+          email_type: emailType,
+          sent_at:    now.toISOString(),
+          metadata:   { email: profile.email, name, trigger_day: triggerDay },
+        });
+      }
 
+      details.push(
+        `[inactivity]${isTest ? "[TEST]" : ""} Sent ${emailType} to ${recipient} (patient: ${profile.full_name ?? profile.id})`
+      );
       sent++;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      details.push(`[inactivity] Error for ${profile.email}: ${msg}`);
       console.error(`[inactivity] Failed for ${profile.email}:`, err);
       errors++;
     }
   }
 
-  return { sent, skipped, errors };
+  return { sent, skipped, errors, details };
 }

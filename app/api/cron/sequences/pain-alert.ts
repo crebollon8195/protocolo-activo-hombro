@@ -1,11 +1,12 @@
 import { Resend } from "resend";
 import { createAdminClient } from "@/lib/supabase";
 import { emailTemplate, ctaButton, statRow, firstName } from "@/lib/email-templates";
+import type { SequenceResult } from "./welcome";
 
-const APP_URL   = process.env.NEXT_PUBLIC_APP_URL || "https://tracker.drcarlosrebollon.com";
-const FROM      = "Dr. Carlos Rebollón <noreply@drcarlosrebollon.com>";
+const APP_URL     = process.env.NEXT_PUBLIC_APP_URL || "https://tracker.drcarlosrebollon.com";
+const FROM        = "Dr. Carlos Rebollón <noreply@drcarlosrebollon.com>";
 const ADMIN_EMAIL = "info@drcarlosrebollon.com";
-const WHATSAPP  = "+50762285793";
+const WHATSAPP    = "+50762285793";
 
 function resend() {
   const key = process.env.RESEND_API_KEY;
@@ -13,29 +14,41 @@ function resend() {
   return new Resend(key);
 }
 
-interface Result { sent: number; skipped: number; errors: number }
-
-export async function runPainAlertSequence(): Promise<Result> {
-  const db  = createAdminClient();
-  const r   = resend();
-  const now = new Date();
+export async function runPainAlertSequence(testEmail?: string): Promise<SequenceResult> {
+  const db      = createAdminClient();
+  const r       = resend();
+  const now     = new Date();
+  const isTest  = Boolean(testEmail);
+  const details: string[] = [];
 
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  // All active patients
-  const { data: profiles, error } = await db
+  // All active patients (test mode: just the first one)
+  let query = db
     .from("profiles")
     .select("id, full_name, email")
     .eq("role", "patient")
     .eq("access_active", true);
 
+  if (isTest) query = (query as any).limit(1);
+
+  const { data: profiles, error } = await query;
+
   if (error) throw new Error(`[pain-alert] DB query failed: ${error.message}`);
-  if (!profiles?.length) return { sent: 0, skipped: 0, errors: 0 };
+
+  if (!profiles?.length) {
+    details.push("[pain-alert] No active patients found.");
+    return { sent: 0, skipped: 0, errors: 0, details };
+  }
 
   let sent = 0, skipped = 0, errors = 0;
 
   for (const profile of profiles) {
-    if (!profile.email) { skipped++; continue; }
+    if (!profile.email) {
+      details.push(`[pain-alert] Skipped ${profile.id}: no email address.`);
+      skipped++;
+      continue;
+    }
 
     try {
       // Last 3 daily logs ordered by date DESC
@@ -46,26 +59,52 @@ export async function runPainAlertSequence(): Promise<Result> {
         .order("date", { ascending: false })
         .limit(3);
 
-      if (!lastLogs || lastLogs.length < 3) { skipped++; continue; }
+      if (!lastLogs || lastLogs.length < 3) {
+        details.push(`[pain-alert] Skipped ${profile.email}: fewer than 3 daily logs (found ${lastLogs?.length ?? 0}).`);
+        skipped++;
+        continue;
+      }
 
-      const allHighPain = lastLogs.every(
-        l => l.pain_score !== null && l.pain_score >= 8
-      );
-      if (!allHighPain) { skipped++; continue; }
+      if (!isTest) {
+        const allHighPain = lastLogs.every(
+          l => l.pain_score !== null && l.pain_score >= 8
+        );
+        if (!allHighPain) {
+          details.push(
+            `[pain-alert] Skipped ${profile.email}: not all 3 recent scores ≥ 8 ` +
+            `(scores: ${lastLogs.map(l => l.pain_score).join(", ")})`
+          );
+          skipped++;
+          continue;
+        }
 
-      // Check: no high_pain_alert sent in the last 7 days
-      const { data: recentAlert } = await (db as any)
-        .from("email_logs")
-        .select("id")
-        .eq("user_id", profile.id)
-        .eq("email_type", "high_pain_alert")
-        .gte("sent_at", sevenDaysAgo)
-        .maybeSingle();
+        // Check: no high_pain_alert sent in the last 7 days
+        const { data: recentAlert } = await (db as any)
+          .from("email_logs")
+          .select("id")
+          .eq("user_id", profile.id)
+          .eq("email_type", "high_pain_alert")
+          .gte("sent_at", sevenDaysAgo)
+          .maybeSingle();
 
-      if (recentAlert) { skipped++; continue; }
+        if (recentAlert) {
+          details.push(`[pain-alert] Skipped ${profile.email}: high_pain_alert already sent in the last 7 days.`);
+          skipped++;
+          continue;
+        }
+      } else {
+        details.push(
+          `[pain-alert][TEST] Pain threshold check bypassed. ` +
+          `Actual scores: ${lastLogs.map(l => l.pain_score ?? "null").join(", ")}`
+        );
+      }
 
       const name   = firstName(profile.full_name);
       const scores = lastLogs.map(l => l.pain_score as number);
+
+      // In test mode both patient and admin alerts go to testEmail
+      const patientRecipient = isTest ? testEmail! : profile.email;
+      const adminRecipient   = isTest ? testEmail! : ADMIN_EMAIL;
 
       // ── Patient email ──────────────────────────────────────────────────────
       const patientBody = `
@@ -103,16 +142,22 @@ export async function runPainAlertSequence(): Promise<Result> {
         </p>
       `;
 
+      const patientSubjectRaw = `Alerta: dolor alto registrado 3 días consecutivos`;
+      const patientSubject    = isTest ? `[TEST] ${patientSubjectRaw}` : patientSubjectRaw;
+
       await r.emails.send({
         from:    FROM,
-        to:      profile.email,
-        subject: `Alerta: dolor alto registrado 3 días consecutivos`,
+        to:      patientRecipient,
+        subject: patientSubject,
         html:    emailTemplate(patientBody),
       });
 
-      // ── Admin / doctor email ───────────────────────────────────────────────
+      details.push(
+        `[pain-alert]${isTest ? "[TEST]" : ""} Patient alert sent to ${patientRecipient} ` +
+        `(patient: ${profile.full_name ?? profile.id})`
+      );
 
-      // Get extra context for admin: recovery score, week number
+      // ── Admin / doctor email ───────────────────────────────────────────────
       const { data: weeklyProgress } = await db
         .from("weekly_progress")
         .select("recovery_score")
@@ -140,7 +185,7 @@ export async function runPainAlertSequence(): Promise<Result> {
 
       const adminBody = `
         <p style="font-size:16px;color:#374151;margin:0 0 16px;">
-          <strong>Alerta clínica automática</strong>
+          <strong>Alerta clínica automática${isTest ? " — MODO TEST" : ""}</strong>
         </p>
         <p style="font-size:16px;color:#374151;margin:0 0 24px;line-height:1.6;">
           El paciente <strong>${profile.full_name ?? name}</strong>
@@ -168,33 +213,44 @@ export async function runPainAlertSequence(): Promise<Result> {
         </p>
       `;
 
+      const adminSubjectRaw = `⚠️ Alerta dolor alto — ${profile.full_name ?? name} (${now.toLocaleDateString("es-PA")})`;
+      const adminSubject    = isTest ? `[TEST] ${adminSubjectRaw}` : adminSubjectRaw;
+
       await r.emails.send({
         from:    FROM,
-        to:      ADMIN_EMAIL,
-        subject: `⚠️ Alerta dolor alto — ${profile.full_name ?? name} (${now.toLocaleDateString("es-PA")})`,
+        to:      adminRecipient,
+        subject: adminSubject,
         html:    emailTemplate(adminBody),
       });
 
-      // Log once (covers both sends)
-      await (db as any).from("email_logs").insert({
-        user_id:    profile.id,
-        email_type: "high_pain_alert",
-        sent_at:    now.toISOString(),
-        metadata:   {
-          email:          profile.email,
-          name,
-          pain_scores:    scores,
-          recovery_score: recoveryScore,
-          week_number:    weekNumber,
-        },
-      });
+      details.push(
+        `[pain-alert]${isTest ? "[TEST]" : ""} Admin alert sent to ${adminRecipient}`
+      );
+
+      if (!isTest) {
+        // Log once (covers both sends)
+        await (db as any).from("email_logs").insert({
+          user_id:    profile.id,
+          email_type: "high_pain_alert",
+          sent_at:    now.toISOString(),
+          metadata:   {
+            email:          profile.email,
+            name,
+            pain_scores:    scores,
+            recovery_score: recoveryScore,
+            week_number:    weekNumber,
+          },
+        });
+      }
 
       sent++;
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      details.push(`[pain-alert] Error for ${profile.email}: ${msg}`);
       console.error(`[pain-alert] Failed for ${profile.email}:`, err);
       errors++;
     }
   }
 
-  return { sent, skipped, errors };
+  return { sent, skipped, errors, details };
 }
