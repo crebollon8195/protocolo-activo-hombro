@@ -37,6 +37,7 @@ export default function LandingPage() {
         <DiffFourSection />
         <TransformationSection />
         <AuthoritySection />
+        <ReviewsSection />
         <PricingSection />
         <FormSection />
       </main>
@@ -95,9 +96,22 @@ function HeroSection() {
           </h1>
 
           {/* Sub */}
-          <p className="font-primary text-base sm:text-lg text-white/65 max-w-2xl mx-auto mb-10 leading-relaxed">
+          <p className="font-primary text-base sm:text-lg text-white/65 max-w-2xl mx-auto mb-7 leading-relaxed">
             {t("hero_sub")}
           </p>
+
+          {/* Trust badge */}
+          <a
+            href="https://g.page/r/CcsvqVXnguitEAE/review"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 mb-8 group"
+          >
+            <span className="text-sm tracking-wide" style={{ color: "#F59E0B" }}>★★★★★</span>
+            <span className="font-primary text-xs text-white/55 group-hover:text-white/80 transition-colors">
+              {t("hero_trust")}
+            </span>
+          </a>
 
           {/* CTAs */}
           <div className="flex flex-col sm:flex-row gap-3 justify-center mb-20 max-w-md mx-auto sm:max-w-none">
@@ -579,7 +593,74 @@ function AuthoritySection() {
   );
 }
 
-/* ── S11. PRICING ────────────────────────────────────────────────────────── */
+/* ── S11. REVIEWS ────────────────────────────────────────────────────────── */
+function ReviewsSection() {
+  const t = useTranslations("landing");
+  const REVIEWS_URL = "https://g.page/r/CcsvqVXnguitEAE/review";
+
+  const reviews = [
+    { textKey: "reviews_r1", authorKey: "reviews_r1_author" },
+    { textKey: "reviews_r2", authorKey: "reviews_r2_author" },
+    { textKey: "reviews_r3", authorKey: "reviews_r3_author" },
+  ] as const;
+
+  return (
+    <section className="bg-[#F5F7FA] py-20 sm:py-24 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-5xl mx-auto">
+        <FadeIn>
+          <p className="font-primary text-xs font-bold tracking-widest uppercase text-[#0170B9] mb-4 text-center">
+            {t("reviews_label")}
+          </p>
+          <h2 className="font-display font-bold text-[#0a1628] leading-tight mb-12 text-center text-2xl sm:text-3xl lg:text-4xl">
+            {t("reviews_h2")}
+          </h2>
+        </FadeIn>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 mb-10">
+          {reviews.map(({ textKey, authorKey }, i) => (
+            <FadeIn key={textKey} delay={i * 90}>
+              <div
+                className="bg-white rounded-2xl p-6 h-full flex flex-col"
+                style={{ border: "1px solid #E5E7EB", boxShadow: "0 1px 6px rgba(0,0,0,0.07)" }}
+              >
+                {/* Stars */}
+                <p className="text-base mb-3" style={{ color: "#F59E0B" }}>★★★★★</p>
+                {/* Review text */}
+                <p className="font-primary text-sm text-dark leading-relaxed flex-1 mb-4">
+                  &ldquo;{t(textKey)}&rdquo;
+                </p>
+                {/* Author */}
+                <p className="font-primary text-xs text-text-secondary font-semibold">
+                  — {t(authorKey)}
+                </p>
+              </div>
+            </FadeIn>
+          ))}
+        </div>
+
+        {/* Aggregate rating + link */}
+        <FadeIn delay={200}>
+          <div className="text-center">
+            <p className="font-primary text-sm font-semibold text-dark mb-2">
+              <span style={{ color: "#F59E0B" }}>★★★★★</span>{" "}
+              {t("reviews_footer")}
+            </p>
+            <a
+              href={REVIEWS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-primary text-sm font-semibold text-[#0170B9] hover:underline"
+            >
+              {t("reviews_link")}
+            </a>
+          </div>
+        </FadeIn>
+      </div>
+    </section>
+  );
+}
+
+/* ── S12. PRICING ────────────────────────────────────────────────────────── */
 function PricingSection() {
   const t = useTranslations("landing");
   // First 4 items are included in BOTH plans
