@@ -102,7 +102,7 @@ function HeroSection() {
 
           {/* Trust badge */}
           <a
-            href="https://g.page/r/CcsvqVXnguitEAE/review"
+            href="https://www.google.com/maps/place/Dr.+Carlos+Reboll%C3%B3n"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 mb-8 group"
@@ -596,7 +596,7 @@ function AuthoritySection() {
 /* ── S11. REVIEWS ────────────────────────────────────────────────────────── */
 function ReviewsSection() {
   const t = useTranslations("landing");
-  const REVIEWS_URL = "https://g.page/r/CcsvqVXnguitEAE/review";
+  const REVIEWS_URL = "https://www.google.com/maps/place/Dr.+Carlos+Reboll%C3%B3n";
 
   const reviews = [
     { textKey: "reviews_r1", authorKey: "reviews_r1_author" },
